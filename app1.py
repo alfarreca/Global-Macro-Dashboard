@@ -374,7 +374,6 @@ if data_manager.cache["market"]:
                     wrapText=True,
                     autoHeight=True
                 )
-                # No cellStyle!
                 gridOptions = gb.build()
                 AgGrid(
                     df_market,
@@ -397,6 +396,74 @@ if data_manager.cache["market"]:
                 "Change": "{:,.2f}",
                 "Change %": "{:,.2f}%"
             }), height=400)
+
+# ===== GLOBAL INDICES NORMALIZED COMPARISON =====
+st.markdown('<div class="section-header">🌎 Global Indices – Normalized Performance</div>', unsafe_allow_html=True)
+
+indices_all = {
+    "S&P 500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "Dow 30": "^DJI",
+    "Russell 2000": "^RUT",
+    "FTSE 100": "^FTSE",
+    "DAX": "^GDAXI",
+    "CAC 40": "^FCHI",
+    "Nikkei 225": "^N225",
+    "Shanghai": "^SSEC",
+    "Hang Seng": "^HSI"
+}
+
+# User selects which indices to display
+indices_selected = st.multiselect(
+    "Select Indices",
+    options=list(indices_all.keys()),
+    default=list(indices_all.keys()),
+    key="indices_select"
+)
+
+# Select which period to display
+norm_period = st.selectbox(
+    "Normalized Chart Period",
+    ["6 Months", "1 Year", "2 Years"],
+    index=1,
+    key="norm_period"
+)
+period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
+hist_period = period_map[norm_period]
+
+with st.spinner("Fetching index data..."):
+    price_hist = {}
+    for idx in indices_selected:
+        ticker = indices_all[idx]
+        try:
+            hist = yf.Ticker(ticker).history(period=hist_period, interval="1d")["Close"]
+            price_hist[idx] = hist
+        except Exception as e:
+            st.warning(f"Error loading {idx}: {e}")
+
+    # Combine into DataFrame, align dates
+    df_prices = pd.DataFrame(price_hist)
+    df_prices = df_prices.dropna(how="all")  # Drop rows with all NaN
+    # Normalize: all series start at 100
+    df_norm = df_prices / df_prices.iloc[0] * 100 if not df_prices.empty else df_prices
+
+    fig_norm = go.Figure()
+    for col in df_norm.columns:
+        fig_norm.add_trace(go.Scatter(
+            x=df_norm.index,
+            y=df_norm[col],
+            name=col
+        ))
+
+    fig_norm.update_layout(
+        title="Global Equity Indices – Normalized Performance",
+        xaxis_title="Date",
+        yaxis_title="Normalized Value (100 = Start)",
+        hovermode="x unified",
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_norm, use_container_width=True)
 
 # ===== ECONOMIC INDICATORS =====
 st.markdown('<div class="section-header">📊 Economic Indicators</div>', unsafe_allow_html=True)
@@ -481,7 +548,6 @@ if data_manager.cache["commodities"]:
                 resizable=True,
                 editable=False
             )
-            # No cellStyle!
             gridOptions = gb.build()
             AgGrid(
                 df_commodities,
