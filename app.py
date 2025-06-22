@@ -12,6 +12,8 @@ import queue
 import requests
 from bs4 import BeautifulSoup
 
+from streamlit_autorefresh import st_autorefresh
+
 # Config
 st.set_page_config(layout="wide", page_title="Real-Time Global Macro Dashboard", page_icon="🌍")
 st.title("🌍 Real-Time Global Macro Dashboard")
@@ -565,8 +567,5 @@ st.markdown("""
 </div>
 """.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')), unsafe_allow_html=True)
 
-# Update the last updated time periodically
-while True:
-    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    update_display.write(f"**Last Updated:** <span class='blink'>{current_time}</span>", unsafe_allow_html=True)
-    time.sleep(1)
+# ---- Auto-refresh every 60 seconds ----
+st_autorefresh(interval=60 * 1000, key="refresh")
