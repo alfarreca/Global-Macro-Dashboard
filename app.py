@@ -3,13 +3,10 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from fredapi import Fred
-import plotly.express as px
 import plotly.graph_objects as go
 import datetime
 import time
 import threading
-import queue
-import requests
 import pytz
 from dateutil.relativedelta import relativedelta
 import warnings
@@ -390,6 +387,8 @@ if data_manager.cache["market"]:
         # Performance table with fallback for st_aggrid
         df_market = pd.DataFrame(market_data)
         df_market = df_market[["Index", "Price", "Change", "Change %", "Updated"]]
+        # Convert Updated column to string to avoid AgGrid serialization errors
+        df_market["Updated"] = pd.to_datetime(df_market["Updated"]).dt.strftime("%Y-%m-%d %H:%M:%S")
         if AGGRID_AVAILABLE:
             gb = GridOptionsBuilder.from_dataframe(df_market)
             gb.configure_default_column(
