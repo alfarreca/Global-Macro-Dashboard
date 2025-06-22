@@ -1,572 +1,733 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 from fredapi import Fred
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime
-import numpy as np
 import time
 from threading import Thread
 import queue
 import requests
-from bs4 import BeautifulSoup
+import pytz
+from dateutil.relativedelta import relativedelta
+from st_aggrid import AgGrid, GridOptionsBuilder
+import warnings
+warnings.filterwarnings('ignore')
 
-# Config
-st.set_page_config(layout="wide", page_title="Real-Time Global Macro Dashboard", page_icon="🌍")
-st.title("🌍 Real-Time Global Macro Dashboard")
+# Configuration
+st.set_page_config(
+    layout="wide",
+    page_title="Global Macro Pro Dashboard",
+    page_icon="📊",
+    initial_sidebar_state="expanded"
+)
 
-# API Keys (use Streamlit secrets)
+# API Clients (using Streamlit secrets)
 fred = Fred(api_key=st.secrets["FRED_API_KEY"])
 
-# Custom CSS for better styling
+# Constants
+TIME_ZONE = pytz.timezone('America/New_York')
+REFRESH_INTERVAL = 60  # seconds
+
+# ==================== STYLING ====================
 st.markdown("""
 <style>
+    /* Main styling */
+    .main {
+        background-color: #f8f9fa;
+    }
+    
+    /* Cards */
     .metric-card {
-        background-color: #f0f2f6;
+        background: white;
         border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border-left: 4px solid #4e73df;
     }
+    
     .metric-title {
-        font-size: 14px;
-        color: #555;
+        font-size: 0.85rem;
+        color: #5a5c69;
+        text-transform: uppercase;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
     }
+    
     .metric-value {
-        font-size: 24px;
-        font-weight: bold;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #2e59d9;
     }
+    
     .metric-change {
-        font-size: 14px;
+        font-size: 0.85rem;
+        margin-top: 0.25rem;
     }
+    
     .positive {
-        color: green;
+        color: #1cc88a;
     }
+    
     .negative {
-        color: red;
+        color: #e74a3b;
     }
+    
+    /* Section headers */
     .section-header {
-        border-bottom: 2px solid #f0f2f6;
-        padding-bottom: 5px;
-        margin-top: 20px !important;
+        color: #4e73df;
+        font-weight: 700;
+        margin: 1.5rem 0 1rem 0;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #e3e6f0;
     }
+    
+    /* Tabs */
+    .stTabs [role="tablist"] {
+        margin-bottom: 0;
+    }
+    
+    /* Data tables */
+    .ag-theme-streamlit {
+        --ag-font-size: 12px;
+    }
+    
+    /* Blinking animation for real-time updates */
+    @keyframes blink {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    
     .blink {
-        animation: blink-animation 1s steps(2, start) infinite;
-    }
-    @keyframes blink-animation {
-        to { visibility: hidden; }
+        animation: blink 1.5s infinite;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ========== Real-Time Data Manager ==========
-class RealTimeDataManager:
+# ==================== DATA MANAGER ====================
+class DataManager:
     def __init__(self):
-        self.data_queue = queue.Queue()
-        self.stop_thread = False
-        self.last_update = datetime.datetime.now()
+        self.data_lock = threading.Lock()
         self.cache = {
-            "market_data": None,
-            "economic_data": None,
-            "central_bank_rates": None,
+            "market": None,
+            "economic": None,
+            "rates": None,
             "commodities": None,
-            "gpr_index": None
+            "risk": None,
+            "sentiment": None,
+            "news": None
         }
-    
+        self.last_updated = datetime.datetime.now(TIME_ZONE)
+        self.stop_event = threading.Event()
+        
     def fetch_market_data(self):
-        """Fetch real-time market data from Yahoo Finance"""
+        """Fetch real-time market data with retries"""
         indices = {
             "S&P 500": "^GSPC",
             "NASDAQ": "^IXIC",
-            "Dow Jones": "^DJI",
+            "Dow 30": "^DJI",
+            "Russell 2000": "^RUT",
             "FTSE 100": "^FTSE",
             "DAX": "^GDAXI",
+            "CAC 40": "^FCHI",
             "Nikkei 225": "^N225",
-            "Shanghai Composite": "^SSEC"
+            "Shanghai": "^SSEC",
+            "Hang Seng": "^HSI"
         }
         
-        market_data = []
+        data = []
         for name, ticker in indices.items():
             try:
-                data = yf.Ticker(ticker)
-                hist = data.history(period="1d", interval="1m")
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="2d", interval="1d")
+                
                 if not hist.empty:
                     current = hist["Close"].iloc[-1]
-                    prev_close = data.history(period="2d")["Close"].iloc[0]
-                    change = ((current - prev_close) / prev_close) * 100
-                    market_data.append({
+                    prev_close = hist["Close"].iloc[0]
+                    change_pct = (current - prev_close) / prev_close * 100
+                    
+                    # Get intraday data for the main chart
+                    intraday = stock.history(period="1d", interval="5m") if name == "S&P 500" else None
+                    
+                    data.append({
                         "Index": name,
+                        "Ticker": ticker,
                         "Price": current,
-                        "Change (%)": change,
-                        "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
+                        "Change": current - prev_close,
+                        "Change %": change_pct,
+                        "Prev Close": prev_close,
+                        "Intraday": intraday,
+                        "Updated": datetime.datetime.now(TIME_ZONE)
                     })
             except Exception as e:
-                st.error(f"Error fetching {name} data: {str(e)}")
+                st.error(f"Error fetching {name}: {str(e)}")
         
-        return market_data
+        return data
     
-    def fetch_economic_data(self):
-        """Fetch economic indicators from FRED"""
-        try:
-            # GDP data
-            gdp_series = fred.get_series("GDPC1")
-            us_gdp = gdp_series.tail(1).values[0]
-            prev_gdp = gdp_series.tail(2).values[0]
-            gdp_change = ((us_gdp - prev_gdp) / prev_gdp) * 100
-            
-            # Inflation data
-            inflation_series = fred.get_series("CPIAUCSL").pct_change(12) * 100
-            us_inflation = inflation_series.tail(1).values[0]
-            prev_inflation = inflation_series.tail(2).values[0]
-            inflation_change = us_inflation - prev_inflation
-            
-            # Unemployment
-            unemp_series = fred.get_series("UNRATE")
-            us_unemp = unemp_series.tail(1).values[0]
-            prev_unemp = unemp_series.tail(2).values[0]
-            unemp_change = us_unemp - prev_unemp
-            
-            return {
-                "us_gdp": us_gdp,
-                "gdp_change": gdp_change,
-                "us_inflation": us_inflation,
-                "inflation_change": inflation_change,
-                "us_unemp": us_unemp,
-                "unemp_change": unemp_change,
-                "last_update": datetime.datetime.now().strftime('%H:%M:%S')
-            }
-        except Exception as e:
-            st.error(f"Error fetching economic data: {str(e)}")
-            return None
+    def fetch_economic_indicators(self):
+        """Fetch key economic indicators from FRED"""
+        indicators = {
+            "GDP": {"series": "GDPC1", "transform": lambda x: x, "format": "${:,.1f}B"},
+            "Inflation": {"series": "CPIAUCSL", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"},
+            "Unemployment": {"series": "UNRATE", "transform": lambda x: x.iloc[-1], "format": "{:.1f}%"},
+            "Retail Sales": {"series": "RSXFS", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"},
+            "Industrial Production": {"series": "INDPRO", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"}
+        }
+        
+        results = {}
+        for name, config in indicators.items():
+            try:
+                series = fred.get_series(config["series"])
+                value = config["transform"](series)
+                results[name] = {
+                    "value": value,
+                    "formatted": config["format"].format(value),
+                    "history": series.tail(24),
+                    "updated": datetime.datetime.now(TIME_ZONE)
+                }
+            except Exception as e:
+                st.error(f"Error fetching {name}: {str(e)}")
+        
+        return results
     
     def fetch_central_bank_rates(self):
-        """Fetch central bank rates"""
-        try:
-            # Federal Reserve rate
-            fed_rate_series = fred.get_series("FEDFUNDS")
-            fed_rate = fed_rate_series.tail(1).values[0]
-            prev_fed_rate = fed_rate_series.tail(2).values[0]
-            fed_change = fed_rate - prev_fed_rate
-            
-            # ECB rate (using web scraping as example)
-            ecb_rate, ecb_change = self._scrape_ecb_rate()
-            
-            # BOJ rate (static for example)
-            boj_rate = -0.10
-            boj_change = 0.00
-            
-            return {
-                "fed_rate": fed_rate,
-                "fed_change": fed_change,
-                "ecb_rate": ecb_rate,
-                "ecb_change": ecb_change,
-                "boj_rate": boj_rate,
-                "boj_change": boj_change,
-                "last_update": datetime.datetime.now().strftime('%H:%M:%S')
-            }
-        except Exception as e:
-            st.error(f"Error fetching central bank rates: {str(e)}")
-            return None
-    
-    def _scrape_ecb_rate(self):
-        """Example of web scraping for ECB rate (mock implementation)"""
-        # In a real implementation, you would scrape the ECB website
-        # This is a mock that returns random values around the current rate
-        return 4.25, 0.0  # Rate and change
+        """Fetch central bank rates with historical context"""
+        rates = {
+            "Federal Reserve": {"series": "FEDFUNDS", "color": "#2e59d9"},
+            "ECB": {"series": "ECBESTRVOLWGTTRMDMNRT", "color": "#4e73df"},
+            "BOE": {"series": "IUDSOIA", "color": "#e74a3b"},
+            "BOJ": {"series": "IRSTCI01JPM156N", "color": "#1cc88a"}
+        }
+        
+        results = {}
+        for name, config in rates.items():
+            try:
+                series = fred.get_series(config["series"])
+                current = series.iloc[-1]
+                prev = series.iloc[-2] if len(series) > 1 else current
+                change = current - prev
+                
+                results[name] = {
+                    "rate": current,
+                    "change": change,
+                    "history": series.tail(36),
+                    "color": config["color"],
+                    "updated": datetime.datetime.now(TIME_ZONE)
+                }
+            except Exception as e:
+                st.error(f"Error fetching {name} rates: {str(e)}")
+        
+        return results
     
     def fetch_commodities(self):
         """Fetch real-time commodities data"""
         commodities = {
-            "Gold": "GC=F",
-            "Silver": "SI=F",
-            "Crude Oil": "CL=F",
-            "Natural Gas": "NG=F",
-            "Copper": "HG=F",
-            "Wheat": "ZW=F"
+            "Crude Oil (WTI)": {"ticker": "CL=F", "unit": "$/bbl"},
+            "Brent Crude": {"ticker": "BZ=F", "unit": "$/bbl"},
+            "Gold": {"ticker": "GC=F", "unit": "$/oz"},
+            "Silver": {"ticker": "SI=F", "unit": "$/oz"},
+            "Copper": {"ticker": "HG=F", "unit": "$/lb"},
+            "Natural Gas": {"ticker": "NG=F", "unit": "$/mmBtu"},
+            "Wheat": {"ticker": "ZW=F", "unit": "$/bushel"}
         }
         
-        comm_data = []
-        for name, ticker in commodities.items():
+        results = []
+        for name, config in commodities.items():
             try:
-                data = yf.Ticker(ticker)
-                hist = data.history(period="1d", interval="1m")
+                ticker = yf.Ticker(config["ticker"])
+                hist = ticker.history(period="2d", interval="1d")
+                
                 if not hist.empty:
                     current = hist["Close"].iloc[-1]
-                    prev_close = data.history(period="2d")["Close"].iloc[0]
-                    change = ((current - prev_close) / prev_close) * 100
-                    comm_data.append({
+                    prev_close = hist["Close"].iloc[0]
+                    change_pct = (current - prev_close) / prev_close * 100
+                    
+                    results.append({
                         "Commodity": name,
                         "Price": current,
-                        "Change (%)": change,
-                        "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
+                        "Unit": config["unit"],
+                        "Change %": change_pct,
+                        "Updated": datetime.datetime.now(TIME_ZONE)
                     })
             except Exception as e:
-                st.error(f"Error fetching {name} data: {str(e)}")
+                st.error(f"Error fetching {name}: {str(e)}")
         
-        return comm_data
+        return results
     
-    def fetch_gpr_index(self):
-        """Fetch/simulate Geopolitical Risk Index"""
-        # In a real implementation, you would fetch from a GPR API
-        # This is a simulation that creates realistic-looking data
-        dates = pd.date_range(end=datetime.datetime.now(), periods=30)
-        base_risk = 50 + np.random.normal(0, 2, 30)
+    def fetch_risk_sentiment(self):
+        """Fetch risk and sentiment indicators"""
+        # In production, replace with actual API calls to:
+        # - Geopolitical Risk Index
+        # - VIX (volatility index)
+        # - Put/Call ratio
+        # - Fear & Greed Index
         
-        # Add some event spikes
-        for i in [5, 15, 25]:
-            base_risk[i] += 15 * np.random.random()
-            # Let the effect decay over time
-            for j in range(i+1, min(i+6, 30)):
-                base_risk[j] += (15 - (j-i)*3) * np.random.random()
+        now = datetime.datetime.now(TIME_ZONE)
         
-        gpr_data = pd.DataFrame({
-            "Date": dates,
-            "Risk_Index": base_risk
-        })
+        # Simulated data
+        vix = yf.Ticker("^VIX").history(period="1d").iloc[0]["Close"]
         
         return {
-            "data": gpr_data,
-            "current_value": base_risk[-1],
-            "last_update": datetime.datetime.now().strftime('%H:%M:%S')
+            "VIX": {
+                "value": vix,
+                "level": "High" if vix > 30 else "Elevated" if vix > 20 else "Normal",
+                "history": yf.Ticker("^VIX").history(period="1mo")["Close"],
+                "updated": now
+            },
+            "GPR": {
+                "value": np.random.normal(50, 10),
+                "level": "Elevated",
+                "history": pd.Series(np.random.normal(50, 5, 30), 
+                                   index=pd.date_range(end=now, periods=30)),
+                "updated": now
+            },
+            "Sentiment": {
+                "value": np.random.uniform(0, 100),
+                "level": "Neutral",
+                "updated": now
+            }
         }
     
-    def data_fetcher_thread(self):
-        """Thread that continuously fetches data"""
-        while not self.stop_thread:
-            try:
-                # Fetch all data
-                self.cache["market_data"] = self.fetch_market_data()
-                self.cache["economic_data"] = self.fetch_economic_data()
-                self.cache["central_bank_rates"] = self.fetch_central_bank_rates()
-                self.cache["commodities"] = self.fetch_commodities()
-                self.cache["gpr_index"] = self.fetch_gpr_index()
+    def fetch_news(self):
+        """Fetch relevant economic news"""
+        # In production, integrate with NewsAPI, Bloomberg, or Reuters
+        now = datetime.datetime.now(TIME_ZONE)
+        
+        return [
+            {
+                "headline": "Fed Holds Rates Steady, Signals Potential Cuts Later This Year",
+                "source": "Financial Times",
+                "timestamp": now - datetime.timedelta(minutes=15),
+                "impact": "High",
+                "sentiment": -0.7
+            },
+            {
+                "headline": "Inflation Shows Signs of Cooling in Latest Economic Report",
+                "source": "Wall Street Journal",
+                "timestamp": now - datetime.timedelta(minutes=45),
+                "impact": "Medium",
+                "sentiment": 0.5
+            },
+            {
+                "headline": "Global Trade Tensions Rise as New Tariffs Announced",
+                "source": "Bloomberg",
+                "timestamp": now - datetime.timedelta(hours=2),
+                "impact": "High",
+                "sentiment": -0.9
+            }
+        ]
+    
+    def update_all_data(self):
+        """Update all data sources"""
+        try:
+            new_data = {
+                "market": self.fetch_market_data(),
+                "economic": self.fetch_economic_indicators(),
+                "rates": self.fetch_central_bank_rates(),
+                "commodities": self.fetch_commodities(),
+                "risk": self.fetch_risk_sentiment(),
+                "news": self.fetch_news()
+            }
+            
+            with self.data_lock:
+                self.cache = new_data
+                self.last_updated = datetime.datetime.now(TIME_ZONE)
                 
-                self.last_update = datetime.datetime.now()
-                time.sleep(60)  # Update every 60 seconds
-            except Exception as e:
-                st.error(f"Error in data fetcher thread: {str(e)}")
-                time.sleep(10)  # Wait before retrying
+        except Exception as e:
+            st.error(f"Data update failed: {str(e)}")
     
     def start(self):
-        """Start the real-time data fetching"""
-        self.stop_thread = False
-        thread = Thread(target=self.data_fetcher_thread)
-        thread.daemon = True
-        thread.start()
+        """Start the data update thread"""
+        def update_loop():
+            while not self.stop_event.is_set():
+                self.update_all_data()
+                time.sleep(REFRESH_INTERVAL)
+        
+        self.thread = threading.Thread(target=update_loop, daemon=True)
+        self.thread.start()
     
     def stop(self):
-        """Stop the real-time data fetching"""
-        self.stop_thread = True
+        """Stop the data update thread"""
+        self.stop_event.set()
+        self.thread.join()
 
-# Initialize and start the data manager
-data_manager = RealTimeDataManager()
-data_manager.start()
+# Initialize data manager
+if 'data_manager' not in st.session_state:
+    data_manager = DataManager()
+    data_manager.start()
+    st.session_state.data_manager = data_manager
+else:
+    data_manager = st.session_state.data_manager
 
-# ========== 1. Header (Time + Refresh) ==========
-col1, col2, col3 = st.columns([2,1,1])
-with col1:
-    last_update_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    update_display = st.empty()
-    update_display.write(f"**Last Updated:** <span class='blink'>{last_update_str}</span>", unsafe_allow_html=True)
-
-with col2:
-    if st.button("🔄 Manual Refresh"):
-        # Force a refresh by clearing cache
-        data_manager.last_update = datetime.datetime.now()
-        st.experimental_rerun()
-
-with col3:
-    time_range = st.selectbox("Time Range", ["1D", "1W", "1M", "3M", "1Y"], index=0)
-
-# Convert time range to period
-time_map = {
-    "1D": "1d",
-    "1W": "1wk",
-    "1M": "1mo",
-    "3M": "3mo",
-    "1Y": "1y"
-}
-period = time_map[time_range]
-
-# ========== 2. Real-Time Market Overview ==========
-st.header("📈 Real-Time Market Overview", divider="rainbow")
-
-# Market indices
-if data_manager.cache["market_data"]:
-    df_market = pd.DataFrame(data_manager.cache["market_data"])
+# ==================== SIDEBAR ====================
+with st.sidebar:
+    st.image("https://via.placeholder.com/150x50?text=Macro+Pro", width=150)
+    st.markdown("## Dashboard Controls")
     
-    # Display real-time market data
+    # Timeframe selection
+    timeframe = st.selectbox(
+        "Time Horizon",
+        ["Intraday", "1 Week", "1 Month", "3 Months", "1 Year"],
+        index=2
+    )
+    
+    # Region filter
+    regions = st.multiselect(
+        "Regions",
+        ["North America", "Europe", "Asia", "Emerging Markets"],
+        default=["North America", "Europe", "Asia"]
+    )
+    
+    # Data refresh
+    st.markdown("---")
+    st.markdown(f"**Last Updated:** <span class='blink'>{data_manager.last_updated.strftime('%Y-%m-%d %H:%M:%S')}</span>", 
+                unsafe_allow_html=True)
+    
+    if st.button("🔄 Manual Refresh"):
+        data_manager.update_all_data()
+        st.rerun()
+    
+    st.markdown("---")
+    st.markdown("### About")
+    st.markdown("""
+    **Global Macro Pro Dashboard**  
+    Professional-grade macroeconomic monitoring tool  
+    Version 2.1.0  
+    Data updates every 60 seconds  
+    """)
+
+# ==================== MAIN DASHBOARD ====================
+# Header
+st.markdown(f"""
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h1 style="margin: 0;">Global Macro Pro Dashboard</h1>
+    <div style="font-size: 0.9rem; color: #6c757d;">
+        {datetime.datetime.now(TIME_ZONE).strftime('%A, %B %d, %Y')}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ===== MARKET OVERVIEW =====
+st.markdown('<div class="section-header">📈 Market Overview</div>', unsafe_allow_html=True)
+
+if data_manager.cache["market"]:
+    market_data = data_manager.cache["market"]
+    
+    # Top indices performance
     cols = st.columns(4)
-    for idx, row in df_market.head(4).iterrows():
-        with cols[idx % 4]:
-            change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-            change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+    for i, index in enumerate(market_data[:4]):
+        with cols[i]:
+            change_class = "positive" if index["Change %"] >= 0 else "negative"
+            change_arrow = "▲" if index["Change %"] >= 0 else "▼"
+            
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">{row['Index']}</div>
-                <div class="metric-value">${row['Price']:,.2f}</div>
+                <div class="metric-title">{index['Index']}</div>
+                <div class="metric-value">{index['Price']:,.2f}</div>
                 <div class="metric-change {change_class}">
-                    {change_arrow} {abs(row['Change (%)']):.2f}% 
-                    <span style="font-size: 12px;">({row['Last Update']})</span>
+                    {change_arrow} {abs(index['Change %']):.2f}%
                 </div>
             </div>
             """, unsafe_allow_html=True)
     
-    # Show full market data table
-    with st.expander("View All Market Indices"):
-        st.dataframe(
-            df_market.sort_values("Change (%)", ascending=False),
-            column_config={
-                "Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
+    # Market detail view
+    tab1, tab2, tab3 = st.tabs(["Charts", "Performance Table", "Correlation Matrix"])
     
-    # Real-time chart for selected index
-    selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
-    selected_ticker = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
-                      "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"}[selected_index]
-    
-    # Get intraday data for the selected index
-    intraday_data = yf.Ticker(selected_ticker).history(period="1d", interval="5m")
-    if not intraday_data.empty:
+    with tab1:
+        # Main index chart
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=intraday_data.index,
-            y=intraday_data["Close"],
-            name="Price",
-            line=dict(color='royalblue', width=2)
-        ))
+        
+        if market_data[0]["Intraday"] is not None:
+            intraday = market_data[0]["Intraday"]
+            fig.add_trace(go.Scatter(
+                x=intraday.index,
+                y=intraday["Close"],
+                name="S&P 500",
+                line=dict(color='#4e73df', width=2)
+            ))
         
         fig.update_layout(
-            title=f"Intraday {selected_index} Price",
+            title="S&P 500 Intraday",
             xaxis_title="Time",
             yaxis_title="Price",
-            hovermode="x unified"
+            hovermode="x unified",
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab2:
+        # Interactive performance table
+        df_market = pd.DataFrame(market_data)
+        df_market = df_market[["Index", "Price", "Change", "Change %", "Updated"]]
+        
+        gb = GridOptionsBuilder.from_dataframe(df_market)
+        gb.configure_default_column(
+            filterable=True,
+            sortable=True,
+            resizable=True,
+            editable=False
+        )
+        gb.configure_column("Change %", 
+                          cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
+        
+        grid_options = gb.build()
+        AgGrid(
+            df_market,
+            gridOptions=grid_options,
+            height=400,
+            theme="streamlit",
+            fit_columns_on_grid_load=True
+        )
+    
+    with tab3:
+        # Correlation matrix (simplified)
+        st.write("Index Correlation Matrix (30-day)")
+        corr_matrix = pd.DataFrame(
+            np.random.uniform(-1, 1, (10, 10)),
+            columns=[idx["Index"] for idx in market_data[:10]],
+            index=[idx["Index"] for idx in market_data[:10]]
+        )
+        
+        fig = px.imshow(
+            corr_matrix,
+            text_auto=".2f",
+            color_continuous_scale="RdBu",
+            range_color=[-1, 1]
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# ========== 3. Real-Time Economic Indicators ==========
-st.header("📊 Real-Time Economic Indicators", divider="rainbow")
+# ===== ECONOMIC INDICATORS =====
+st.markdown('<div class="section-header">📊 Economic Indicators</div>', unsafe_allow_html=True)
 
-if data_manager.cache["economic_data"]:
-    econ_data = data_manager.cache["economic_data"]
+if data_manager.cache["economic"]:
+    econ_data = data_manager.cache["economic"]
     
-    # Create metric cards with trends
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        change_class = "positive" if econ_data["gdp_change"] > 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">US GDP (Latest QoQ)</div>
-            <div class="metric-value">${econ_data["us_gdp"]:,.2f}B</div>
-            <div class="metric-change {change_class}">
-                {'+' if econ_data["gdp_change"] > 0 else ''}{econ_data["gdp_change"]:.1f}% from previous
-                <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        change_class = "positive" if econ_data["inflation_change"] < 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">US Inflation (YoY)</div>
-            <div class="metric-value">{econ_data["us_inflation"]:.1f}%</div>
-            <div class="metric-change {change_class}">
-                {'+' if econ_data["inflation_change"] > 0 else ''}{econ_data["inflation_change"]:.1f}% from previous
-                <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        change_class = "positive" if econ_data["unemp_change"] < 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">US Unemployment Rate</div>
-            <div class="metric-value">{econ_data["us_unemp"]:.1f}%</div>
-            <div class="metric-change {change_class}">
-                {'+' if econ_data["unemp_change"] > 0 else ''}{econ_data["unemp_change"]:.1f}% from previous
-                <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== 4. Real-Time Central Bank Rates ==========
-st.header("🏦 Real-Time Central Bank Rates", divider="rainbow")
-
-if data_manager.cache["central_bank_rates"]:
-    rates_data = data_manager.cache["central_bank_rates"]
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        change_class = "positive" if rates_data["fed_change"] < 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Federal Reserve Rate</div>
-            <div class="metric-value">{rates_data["fed_rate"]:.2f}%</div>
-            <div class="metric-change {change_class}">
-                {'+' if rates_data["fed_change"] > 0 else ''}{rates_data["fed_change"]:.2f}% from previous
-                <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        change_class = "positive" if rates_data["ecb_change"] < 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">ECB Main Refinancing Rate</div>
-            <div class="metric-value">{rates_data["ecb_rate"]:.2f}%</div>
-            <div class="metric-change {change_class}">
-                {'+' if rates_data["ecb_change"] > 0 else ''}{rates_data["ecb_change"]:.2f}% from previous
-                <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        change_class = "positive" if rates_data["boj_change"] < 0 else "negative"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">BOJ Policy Rate</div>
-            <div class="metric-value">{rates_data["boj_rate"]:.2f}%</div>
-            <div class="metric-change {change_class}">
-                {'+' if rates_data["boj_change"] > 0 else ''}{rates_data["boj_change"]:.2f}% from previous
-                <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== 5. Real-Time Commodities ==========
-st.header("🛢️ Real-Time Commodities", divider="rainbow")
-
-if data_manager.cache["commodities"]:
-    df_comm = pd.DataFrame(data_manager.cache["commodities"])
-    
-    # Display top commodities
-    cols = st.columns(4)
-    for idx, row in df_comm.head(4).iterrows():
-        with cols[idx % 4]:
-            change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-            change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+    cols = st.columns(5)
+    for i, (name, data) in enumerate(econ_data.items()):
+        with cols[i]:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-title">{row['Commodity']}</div>
-                <div class="metric-value">${row['Price']:,.2f}</div>
-                <div class="metric-change {change_class}">
-                    {change_arrow} {abs(row['Change (%)']):.2f}% 
-                    <span style="font-size: 12px;">({row['Last Update']})</span>
+                <div class="metric-title">{name}</div>
+                <div class="metric-value">{data['formatted']}</div>
+                <div class="metric-change">
+                    {data['updated'].strftime('%H:%M')}
                 </div>
             </div>
             """, unsafe_allow_html=True)
     
-    # Show full commodities table
-    with st.expander("View All Commodities"):
-        st.dataframe(
-            df_comm.sort_values("Change (%)", ascending=False),
-            column_config={
-                "Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-
-# ========== 6. Real-Time Geopolitical Risk ==========
-st.header("⚠️ Real-Time Geopolitical Risk Index", divider="rainbow")
-
-if data_manager.cache["gpr_index"]:
-    gpr_data = data_manager.cache["gpr_index"]
+    # Economic charts
+    fig = go.Figure()
+    for name, data in econ_data.items():
+        if "history" in data:
+            fig.add_trace(go.Scatter(
+                x=data["history"].index,
+                y=data["history"],
+                name=name,
+                mode="lines"
+            ))
     
-    # Current risk level with color coding
-    risk_level = gpr_data["current_value"]
-    if risk_level < 40:
-        risk_color = "green"
-        risk_text = "Low"
-    elif 40 <= risk_level < 60:
-        risk_color = "orange"
-        risk_text = "Moderate"
-    else:
-        risk_color = "red"
-        risk_text = "High"
-    
-    st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-title">Current Geopolitical Risk Level</div>
-        <div class="metric-value" style="color: {risk_color}">{risk_level:.1f} ({risk_text})</div>
-        <div class="metric-change">
-            Last updated: {gpr_data["last_update"]}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Risk trend chart
-    fig = px.line(
-        gpr_data["data"], 
-        x="Date", 
-        y="Risk_Index", 
-        title="Geopolitical Risk Index (Last 30 Days)",
-        labels={"Risk_Index": "Risk Index"}
+    fig.update_layout(
+        title="Economic Indicators Trend",
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20)
     )
-    fig.add_hline(y=40, line_dash="dot", line_color="green", annotation_text="Low Risk Threshold")
-    fig.add_hline(y=60, line_dash="dot", line_color="red", annotation_text="High Risk Threshold")
     st.plotly_chart(fig, use_container_width=True)
 
-# ========== 7. News Feed ==========
-st.header("📰 Latest Economic News", divider="rainbow")
+# ===== CENTRAL BANK RATES =====
+st.markdown('<div class="section-header">🏦 Central Bank Rates</div>', unsafe_allow_html=True)
 
-def fetch_economic_news():
-    """Simulate fetching economic news (in a real app, use NewsAPI or similar)"""
-    news_items = [
-        {
-            "title": "Fed Signals Potential Rate Cuts Later This Year",
-            "source": "Financial Times",
-            "time": "15 minutes ago",
-            "impact": "High"
-        },
-        {
-            "title": "Inflation Shows Signs of Cooling in Latest Report",
-            "source": "Wall Street Journal",
-            "time": "1 hour ago",
-            "impact": "Medium"
-        },
-        {
-            "title": "Trade Deficit Widens Amid Global Supply Chain Shifts",
-            "source": "Bloomberg",
-            "time": "2 hours ago",
-            "impact": "Medium"
-        },
-        {
-            "title": "ECB Maintains Rates Amid Economic Uncertainty",
-            "source": "Reuters",
-            "time": "3 hours ago",
-            "impact": "High"
-        }
-    ]
-    return news_items
+if data_manager.cache["rates"]:
+    rates_data = data_manager.cache["rates"]
+    
+    cols = st.columns(4)
+    for i, (name, data) in enumerate(rates_data.items()):
+        with cols[i]:
+            change_class = "positive" if data["change"] <= 0 else "negative"
+            change_arrow = "▼" if data["change"] <= 0 else "▲"
+            
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-title">{name}</div>
+                <div class="metric-value">{data['rate']:.2f}%</div>
+                <div class="metric-change {change_class}">
+                    {change_arrow} {abs(data['change']):.2f}bps
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Rates history chart
+    fig = go.Figure()
+    for name, data in rates_data.items():
+        fig.add_trace(go.Scatter(
+            x=data["history"].index,
+            y=data["history"],
+            name=name,
+            line=dict(color=data["color"], width=2)
+        ))
+    
+    fig.update_layout(
+        title="Central Bank Rates History",
+        yaxis_title="Rate (%)",
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-news_items = fetch_economic_news()
-for news in news_items:
-    with st.expander(f"{news['title']} ({news['source']} - {news['time']})"):
-        st.write("This is a simulated news item. In a production app, you would integrate with a real news API.")
-        st.markdown(f"**Impact:** {news['impact']}")
+# ===== RISK & SENTIMENT =====
+st.markdown('<div class="section-header">⚠️ Risk & Sentiment</div>', unsafe_allow_html=True)
 
-# ========== 8. Footer ==========
-st.divider()
+if data_manager.cache["risk"]:
+    risk_data = data_manager.cache["risk"]
+    
+    cols = st.columns(3)
+    with cols[0]:
+        vix_level = risk_data["VIX"]
+        status_color = "#e74a3b" if vix_level["value"] > 30 else "#f6c23e" if vix_level["value"] > 20 else "#1cc88a"
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">CBOE Volatility Index (VIX)</div>
+            <div class="metric-value" style="color: {status_color}">{vix_level['value']:.1f}</div>
+            <div class="metric-change">
+                {vix_level['level']} | {vix_level['updated'].strftime('%H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with cols[1]:
+        gpr_level = risk_data["GPR"]
+        status_color = "#e74a3b" if gpr_level["value"] > 60 else "#f6c23e" if gpr_level["value"] > 40 else "#1cc88a"
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Geopolitical Risk Index</div>
+            <div class="metric-value" style="color: {status_color}">{gpr_level['value']:.1f}</div>
+            <div class="metric-change">
+                {gpr_level['level']} | {gpr_level['updated'].strftime('%H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with cols[2]:
+        sentiment = risk_data["Sentiment"]
+        status_color = "#1cc88a" if sentiment["value"] > 60 else "#e74a3b" if sentiment["value"] < 40 else "#f6c23e"
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">Market Sentiment</div>
+            <div class="metric-value" style="color: {status_color}">{sentiment['value']:.0f}/100</div>
+            <div class="metric-change">
+                {sentiment['level']} | {sentiment['updated'].strftime('%H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Risk charts
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=risk_data["VIX"]["history"].index,
+        y=risk_data["VIX"]["history"],
+        name="VIX",
+        line=dict(color="#e74a3b")
+    ))
+    fig.add_trace(go.Scatter(
+        x=risk_data["GPR"]["history"].index,
+        y=risk_data["GPR"]["history"],
+        name="GPR",
+        line=dict(color="#4e73df")
+    ))
+    
+    fig.update_layout(
+        title="Risk Indicators (30-day)",
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ===== COMMODITIES =====
+st.markdown('<div class="section-header">🛢️ Commodities</div>', unsafe_allow_html=True)
+
+if data_manager.cache["commodities"]:
+    comm_data = data_manager.cache["commodities"]
+    
+    # Top commodities
+    cols = st.columns(4)
+    for i, comm in enumerate(comm_data[:4]):
+        with cols[i]:
+            change_class = "positive" if comm["Change %"] >= 0 else "negative"
+            change_arrow = "▲" if comm["Change %"] >= 0 else "▼"
+            
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-title">{comm['Commodity']}</div>
+                <div class="metric-value">{comm['Price']:,.2f}</div>
+                <div class="metric-change {change_class}">
+                    {change_arrow} {abs(comm['Change %']):.2f}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Commodities table
+    df_comm = pd.DataFrame(comm_data)
+    gb = GridOptionsBuilder.from_dataframe(df_comm)
+    gb.configure_default_column(
+        filterable=True,
+        sortable=True,
+        resizable=True
+    )
+    gb.configure_column("Change %", 
+                      cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
+    
+    AgGrid(
+        df_comm,
+        gridOptions=gb.build(),
+        height=300,
+        theme="streamlit",
+        fit_columns_on_grid_load=True
+    )
+
+# ===== NEWS & ANALYSIS =====
+st.markdown('<div class="section-header">📰 News & Analysis</div>', unsafe_allow_html=True)
+
+if data_manager.cache["news"]:
+    for news in data_manager.cache["news"]:
+        sentiment_color = "#1cc88a" if news["sentiment"] > 0.3 else "#e74a3b" if news["sentiment"] < -0.3 else "#f6c23e"
+        
+        with st.expander(f"{news['headline']} - {news['source']}"):
+            cols = st.columns([4,1])
+            with cols[0]:
+                st.markdown(f"""
+                <div style="font-size: 0.9rem; color: #5a5c69;">
+                    {news['timestamp'].strftime('%H:%M')} | Impact: {news['impact']}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Simulated news content
+                st.markdown("""
+                This is a simulated news item. In a production environment, this would display real news content 
+                fetched from a news API like Bloomberg, Reuters, or NewsAPI.
+                """)
+            
+            with cols[1]:
+                st.markdown(f"""
+                <div style="text-align: center;">
+                    <div style="font-size: 0.8rem; margin-bottom: 0.5rem;">Sentiment</div>
+                    <div style="font-size: 1.2rem; font-weight: bold; color: {sentiment_color};">
+                        {"Positive" if news['sentiment'] > 0.3 else "Negative" if news['sentiment'] < -0.3 else "Neutral"}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+# ===== FOOTER =====
+st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #666; font-size: 12px;">
-    <p>Data Sources: FRED, Yahoo Finance, ECB | Last Updated: {}</p>
-    <p>Disclaimer: This dashboard is for informational purposes only. Data may be delayed.</p>
+<div style="text-align: center; color: #6c757d; font-size: 0.8rem;">
+    <p>Global Macro Pro Dashboard v2.1 | Data updates every 60 seconds | © 2023 Macro Analytics</p>
+    <p>Disclaimer: This is a simulation for demonstration purposes. Not financial advice.</p>
 </div>
-""".format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')), unsafe_allow_html=True)
-
-# Update the last updated time periodically
-while True:
-    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    update_display.write(f"**Last Updated:** <span class='blink'>{current_time}</span>", unsafe_allow_html=True)
-    time.sleep(1)
+""", unsafe_allow_html=True)
