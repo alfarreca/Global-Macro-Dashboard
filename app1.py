@@ -423,58 +423,61 @@ norm_period = st.selectbox(
 period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
 hist_period = period_map[norm_period]
 
-with st.spinner("Fetching index data..."):
-    price_hist = {}
-    missing_indices = []
-    for idx in indices_selected:
-        ticker = indices_all[idx]
-        try:
-            hist = yf.Ticker(ticker).history(period=hist_period, interval="1d")["Close"]
-            if hist.empty or hist.isnull().all():
+if indices_selected:
+    with st.spinner("Fetching index data..."):
+        price_hist = {}
+        missing_indices = []
+        for idx in indices_selected:
+            ticker = indices_all[idx]
+            try:
+                hist = yf.Ticker(ticker).history(period=hist_period, interval="1d")["Close"]
+                if hist.empty or hist.isnull().all():
+                    missing_indices.append(idx)
+                    continue
+                price_hist[idx] = hist
+            except Exception as e:
                 missing_indices.append(idx)
                 continue
-            price_hist[idx] = hist
-        except Exception as e:
-            missing_indices.append(idx)
-            continue
 
-    df_prices = pd.DataFrame(price_hist)
-    df_prices = df_prices.sort_index()
-    df_prices = df_prices.ffill()
-    df_prices = df_prices.dropna(how="all")
-    
-    min_points = 10
-    cols_to_plot = [col for col in df_prices.columns if df_prices[col].count() >= min_points]
+        df_prices = pd.DataFrame(price_hist)
+        df_prices = df_prices.sort_index()
+        df_prices = df_prices.ffill()
+        df_prices = df_prices.dropna(how="all")
+        
+        min_points = 10
+        cols_to_plot = [col for col in df_prices.columns if df_prices[col].count() >= min_points]
 
-    if cols_to_plot:
-        df_norm = df_prices[cols_to_plot] / df_prices[cols_to_plot].iloc[0] * 100
-    else:
-        df_norm = pd.DataFrame()
+        if cols_to_plot:
+            df_norm = df_prices[cols_to_plot] / df_prices[cols_to_plot].iloc[0] * 100
+        else:
+            df_norm = pd.DataFrame()
 
-    fig_norm = go.Figure()
-    for col in df_norm.columns:
-        fig_norm.add_trace(go.Scatter(
-            x=df_norm.index,
-            y=df_norm[col],
-            name=col
-        ))
+        fig_norm = go.Figure()
+        for col in df_norm.columns:
+            fig_norm.add_trace(go.Scatter(
+                x=df_norm.index,
+                y=df_norm[col],
+                name=col
+            ))
 
-    fig_norm.update_layout(
-        title="Global Equity Indices – Normalized Performance",
-        xaxis_title="Date",
-        yaxis_title="Normalized Value (100 = Start)",
-        hovermode="x unified",
-        height=500,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    st.plotly_chart(fig_norm, use_container_width=True)
-
-    if missing_indices:
-        st.warning(
-            f"⚠️ No price data found for: {', '.join(missing_indices)}. These indices are excluded from the chart."
+        fig_norm.update_layout(
+            title="Global Equity Indices – Normalized Performance",
+            xaxis_title="Date",
+            yaxis_title="Normalized Value (100 = Start)",
+            hovermode="x unified",
+            height=500,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-    if not cols_to_plot:
-        st.info("No valid price series available for the selected indices and period.")
+        st.plotly_chart(fig_norm, use_container_width=True)
+
+        if missing_indices:
+            st.warning(
+                f"⚠️ No price data found for: {', '.join(missing_indices)}. These indices are excluded from the chart."
+            )
+        if not cols_to_plot:
+            st.info("No valid price series available for the selected indices and period.")
+else:
+    st.info("Please select at least one index to display the normalized chart.")
 
 # ===== ECONOMIC INDICATORS =====
 st.markdown('<div class="section-header">📊 Economic Indicators</div>', unsafe_allow_html=True)
@@ -507,7 +510,7 @@ if data_manager.cache["economic"]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# (Other dashboard sections: Central Bank Rates, Commodities, etc., unchanged from prior script...)
+# (Add your other sections—Central Bank Rates, Commodities, etc.—as in your last working version)
 
 # ===== FOOTER =====
 st.markdown("---")
