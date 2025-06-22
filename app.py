@@ -75,7 +75,6 @@ class RealTimeDataManager:
         }
     
     def fetch_market_data(self):
-        """Fetch real-time market data from Yahoo Finance"""
         indices = {
             "S&P 500": "^GSPC",
             "NASDAQ": "^IXIC",
@@ -85,7 +84,6 @@ class RealTimeDataManager:
             "Nikkei 225": "^N225",
             # "Shanghai Composite": "^SSEC",  # Uncomment if supported in your region
         }
-        
         market_data = []
         for name, ticker in indices.items():
             try:
@@ -108,7 +106,6 @@ class RealTimeDataManager:
         return market_data
     
     def fetch_economic_data(self):
-        """Fetch economic indicators from FRED"""
         try:
             gdp_series = fred.get_series("GDPC1")
             us_gdp = gdp_series.tail(1).values[0]
@@ -139,7 +136,6 @@ class RealTimeDataManager:
             return None
     
     def fetch_central_bank_rates(self):
-        """Fetch central bank rates"""
         try:
             fed_rate_series = fred.get_series("FEDFUNDS")
             fed_rate = fed_rate_series.tail(1).values[0]
@@ -168,7 +164,6 @@ class RealTimeDataManager:
         return 4.25, 0.0
     
     def fetch_commodities(self):
-        """Fetch real-time commodities data"""
         commodities = {
             "Gold": "GC=F",
             "Silver": "SI=F",
@@ -242,9 +237,9 @@ data_manager.start()
 # ========== 1. Header (Time + Refresh) ==========
 col1, col2, col3 = st.columns([2,1,1])
 with col1:
-    last_update_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    update_display = st.empty()
-    update_display.write(f"**Last Updated:** <span class='blink'>{last_update_str}</span>", unsafe_allow_html=True)
+    # Show actual last update time
+    last_update_str = data_manager.last_update.strftime('%Y-%m-%d %H:%M:%S')
+    st.markdown(f"**Last Updated:** <span class='blink'>{last_update_str}</span>", unsafe_allow_html=True)
 
 with col2:
     if st.button("🔄 Manual Refresh"):
