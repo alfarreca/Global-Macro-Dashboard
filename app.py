@@ -45,12 +45,7 @@ REFRESH_INTERVAL = 60  # seconds
 # ==================== STYLING ====================
 st.markdown("""
 <style>
-    /* Main styling */
-    .main {
-        background-color: #f8f9fa;
-    }
-    
-    /* Cards */
+    .main { background-color: #f8f9fa; }
     .metric-card {
         background: white;
         border-radius: 10px;
@@ -59,7 +54,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
         border-left: 4px solid #4e73df;
     }
-    
     .metric-title {
         font-size: 0.85rem;
         color: #5a5c69;
@@ -67,27 +61,17 @@ st.markdown("""
         font-weight: 700;
         margin-bottom: 0.25rem;
     }
-    
     .metric-value {
         font-size: 1.5rem;
         font-weight: 700;
         color: #2e59d9;
     }
-    
     .metric-change {
         font-size: 0.85rem;
         margin-top: 0.25rem;
     }
-    
-    .positive {
-        color: #1cc88a;
-    }
-    
-    .negative {
-        color: #e74a3b;
-    }
-    
-    /* Section headers */
+    .positive { color: #1cc88a; }
+    .negative { color: #e74a3b; }
     .section-header {
         color: #4e73df;
         font-weight: 700;
@@ -95,27 +79,14 @@ st.markdown("""
         padding-bottom: 0.5rem;
         border-bottom: 1px solid #e3e6f0;
     }
-    
-    /* Tabs */
-    .stTabs [role="tablist"] {
-        margin-bottom: 0;
-    }
-    
-    /* Data tables */
-    .dataframe {
-        width: 100%;
-    }
-    
-    /* Blinking animation for real-time updates */
+    .stTabs [role="tablist"] { margin-bottom: 0; }
+    .dataframe { width: 100%; }
     @keyframes blink {
         0% { opacity: 1; }
         50% { opacity: 0.5; }
         100% { opacity: 1; }
     }
-    
-    .blink {
-        animation: blink 1.5s infinite;
-    }
+    .blink { animation: blink 1.5s infinite; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -136,7 +107,6 @@ class DataManager:
         self.stop_event = threading.Event()
         
     def fetch_market_data(self):
-        """Fetch real-time market data with retries"""
         indices = {
             "S&P 500": "^GSPC",
             "NASDAQ": "^IXIC",
@@ -149,21 +119,17 @@ class DataManager:
             "Shanghai": "^SSEC",
             "Hang Seng": "^HSI"
         }
-        
         data = []
         for name, ticker in indices.items():
             try:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period="2d", interval="1d")
-                
                 if not hist.empty:
                     current = hist["Close"].iloc[-1]
                     prev_close = hist["Close"].iloc[0]
                     change_pct = (current - prev_close) / prev_close * 100
-                    
                     # Get intraday data for the main chart
                     intraday = stock.history(period="1d", interval="5m") if name == "S&P 500" else None
-                    
                     data.append({
                         "Index": name,
                         "Ticker": ticker,
@@ -176,11 +142,9 @@ class DataManager:
                     })
             except Exception as e:
                 st.error(f"Error fetching {name}: {str(e)}")
-        
         return data
     
     def fetch_economic_indicators(self):
-        """Fetch key economic indicators from FRED"""
         indicators = {
             "GDP": {"series": "GDPC1", "transform": lambda x: x, "format": "${:,.1f}B"},
             "Inflation": {"series": "CPIAUCSL", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"},
@@ -188,7 +152,6 @@ class DataManager:
             "Retail Sales": {"series": "RSXFS", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"},
             "Industrial Production": {"series": "INDPRO", "transform": lambda x: x.pct_change(12).iloc[-1]*100, "format": "{:.1f}%"}
         }
-        
         results = {}
         for name, config in indicators.items():
             try:
@@ -202,18 +165,15 @@ class DataManager:
                 }
             except Exception as e:
                 st.error(f"Error fetching {name}: {str(e)}")
-        
         return results
     
     def fetch_central_bank_rates(self):
-        """Fetch central bank rates with historical context"""
         rates = {
             "Federal Reserve": {"series": "FEDFUNDS", "color": "#2e59d9"},
             "ECB": {"series": "ECBESTRVOLWGTTRMDMNRT", "color": "#4e73df"},
             "BOE": {"series": "IUDSOIA", "color": "#e74a3b"},
             "BOJ": {"series": "IRSTCI01JPM156N", "color": "#1cc88a"}
         }
-        
         results = {}
         for name, config in rates.items():
             try:
@@ -221,7 +181,6 @@ class DataManager:
                 current = series.iloc[-1]
                 prev = series.iloc[-2] if len(series) > 1 else current
                 change = current - prev
-                
                 results[name] = {
                     "rate": current,
                     "change": change,
@@ -231,11 +190,9 @@ class DataManager:
                 }
             except Exception as e:
                 st.error(f"Error fetching {name} rates: {str(e)}")
-        
         return results
     
     def fetch_commodities(self):
-        """Fetch real-time commodities data"""
         commodities = {
             "Crude Oil (WTI)": {"ticker": "CL=F", "unit": "$/bbl"},
             "Brent Crude": {"ticker": "BZ=F", "unit": "$/bbl"},
@@ -245,18 +202,15 @@ class DataManager:
             "Natural Gas": {"ticker": "NG=F", "unit": "$/mmBtu"},
             "Wheat": {"ticker": "ZW=F", "unit": "$/bushel"}
         }
-        
         results = []
         for name, config in commodities.items():
             try:
                 ticker = yf.Ticker(config["ticker"])
                 hist = ticker.history(period="2d", interval="1d")
-                
                 if not hist.empty:
                     current = hist["Close"].iloc[-1]
                     prev_close = hist["Close"].iloc[0]
                     change_pct = (current - prev_close) / prev_close * 100
-                    
                     results.append({
                         "Commodity": name,
                         "Price": current,
@@ -266,19 +220,15 @@ class DataManager:
                     })
             except Exception as e:
                 st.error(f"Error fetching {name}: {str(e)}")
-        
         return results
     
     def fetch_risk_sentiment(self):
-        """Fetch risk and sentiment indicators"""
         now = datetime.datetime.now(TIME_ZONE)
-        
         try:
             vix = yf.Ticker("^VIX").history(period="1d").iloc[0]["Close"]
         except Exception as e:
             st.error(f"Error fetching VIX: {str(e)}")
             vix = 20  # Default value
-            
         return {
             "VIX": {
                 "value": vix,
@@ -289,7 +239,7 @@ class DataManager:
             "GPR": {
                 "value": np.random.normal(50, 10),
                 "level": "Elevated",
-                "history": pd.Series(np.random.normal(50, 5, 30), 
+                "history": pd.Series(np.random.normal(50, 5, 30)),
                 "updated": now
             },
             "Sentiment": {
@@ -300,9 +250,7 @@ class DataManager:
         }
     
     def fetch_news(self):
-        """Fetch relevant economic news"""
         now = datetime.datetime.now(TIME_ZONE)
-        
         return [
             {
                 "headline": "Fed Holds Rates Steady, Signals Potential Cuts Later This Year",
@@ -321,7 +269,6 @@ class DataManager:
         ]
     
     def update_all_data(self):
-        """Update all data sources"""
         try:
             new_data = {
                 "market": self.fetch_market_data(),
@@ -331,26 +278,21 @@ class DataManager:
                 "risk": self.fetch_risk_sentiment(),
                 "news": self.fetch_news()
             }
-            
             with self.data_lock:
                 self.cache = new_data
                 self.last_updated = datetime.datetime.now(TIME_ZONE)
-                
         except Exception as e:
             st.error(f"Data update failed: {str(e)}")
     
     def start(self):
-        """Start the data update thread"""
         def update_loop():
             while not self.stop_event.is_set():
                 self.update_all_data()
                 time.sleep(REFRESH_INTERVAL)
-        
         self.thread = threading.Thread(target=update_loop, daemon=True)
         self.thread.start()
     
     def stop(self):
-        """Stop the data update thread"""
         self.stop_event.set()
         self.thread.join()
 
@@ -366,30 +308,25 @@ else:
 with st.sidebar:
     st.image("https://via.placeholder.com/150x50?text=Macro+Pro", width=150)
     st.markdown("## Dashboard Controls")
-    
     # Timeframe selection
     timeframe = st.selectbox(
         "Time Horizon",
         ["Intraday", "1 Week", "1 Month", "3 Months", "1 Year"],
         index=2
     )
-    
     # Region filter
     regions = st.multiselect(
         "Regions",
         ["North America", "Europe", "Asia", "Emerging Markets"],
         default=["North America", "Europe", "Asia"]
     )
-    
     # Data refresh
     st.markdown("---")
     st.markdown(f"**Last Updated:** <span class='blink'>{data_manager.last_updated.strftime('%Y-%m-%d %H:%M:%S')}</span>", 
                 unsafe_allow_html=True)
-    
     if st.button("🔄 Manual Refresh"):
         data_manager.update_all_data()
         st.rerun()
-    
     st.markdown("---")
     st.markdown("### About")
     st.markdown("""
@@ -400,7 +337,6 @@ with st.sidebar:
     """)
 
 # ==================== MAIN DASHBOARD ====================
-# Header
 st.markdown(f"""
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
     <h1 style="margin: 0;">Global Macro Pro Dashboard</h1>
@@ -412,17 +348,14 @@ st.markdown(f"""
 
 # ===== MARKET OVERVIEW =====
 st.markdown('<div class="section-header">📈 Market Overview</div>', unsafe_allow_html=True)
-
 if data_manager.cache["market"]:
     market_data = data_manager.cache["market"]
-    
     # Top indices performance
     cols = st.columns(4)
     for i, index in enumerate(market_data[:4]):
         with cols[i]:
             change_class = "positive" if index["Change %"] >= 0 else "negative"
             change_arrow = "▲" if index["Change %"] >= 0 else "▼"
-            
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-title">{index['Index']}</div>
@@ -432,14 +365,11 @@ if data_manager.cache["market"]:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-    
     # Market detail view
     tab1, tab2 = st.tabs(["Charts", "Performance Table"])
-    
     with tab1:
         # Main index chart
         fig = go.Figure()
-        
         if market_data[0]["Intraday"] is not None:
             intraday = market_data[0]["Intraday"]
             fig.add_trace(go.Scatter(
@@ -448,7 +378,6 @@ if data_manager.cache["market"]:
                 name="S&P 500",
                 line=dict(color='#4e73df', width=2)
             ))
-        
         fig.update_layout(
             title="S&P 500 Intraday",
             xaxis_title="Time",
@@ -457,12 +386,10 @@ if data_manager.cache["market"]:
             height=400
         )
         st.plotly_chart(fig, use_container_width=True)
-    
     with tab2:
         # Performance table with fallback for st_aggrid
         df_market = pd.DataFrame(market_data)
         df_market = df_market[["Index", "Price", "Change", "Change %", "Updated"]]
-        
         if AGGRID_AVAILABLE:
             gb = GridOptionsBuilder.from_dataframe(df_market)
             gb.configure_default_column(
@@ -473,7 +400,6 @@ if data_manager.cache["market"]:
             )
             gb.configure_column("Change %", 
                               cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
-            
             AgGrid(
                 df_market,
                 gridOptions=gb.build(),
@@ -482,7 +408,6 @@ if data_manager.cache["market"]:
                 fit_columns_on_grid_load=True
             )
         else:
-            # Format the DataFrame for better display
             styled_df = df_market.style.format({
                 "Price": "{:,.2f}",
                 "Change": "{:,.2f}",
@@ -490,8 +415,7 @@ if data_manager.cache["market"]:
             })
             st.dataframe(styled_df, height=400)
 
-# Rest of your dashboard sections (Economic Indicators, Central Bank Rates, etc.)
-# ... [previous code continues with the other sections] ...
+# [Add other dashboard sections as needed...]
 
 # ===== FOOTER =====
 st.markdown("---")
