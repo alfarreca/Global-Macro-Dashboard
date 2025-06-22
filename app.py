@@ -117,6 +117,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def convert_datetime_columns(df):
+    """Convert datetime columns to strings for compatibility"""
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].astype(str)
+    return df
+
 # ==================== DATA MANAGER ====================
 class DataManager:
     def __init__(self):
@@ -131,6 +138,16 @@ class DataManager:
         }
         self.last_updated = datetime.datetime.now(TIME_ZONE)
         self.stop_event = threading.Event()
+        
+    def safe_yfinance_fetch(self, ticker, period, interval):
+        """Wrapper for yfinance with retries and error handling"""
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period=period, interval=interval)
+            return hist
+        except Exception as e:
+            st.error(f"Error fetching {ticker}: {str(e)}")
+            return None
         
     def fetch_market_data(self):
         """Fetch real-time market data with retries"""
@@ -149,17 +166,16 @@ class DataManager:
         
         data = []
         for name, ticker in indices.items():
-            try:
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="2d", interval="1d")
-                
-                if not hist.empty:
+            hist = self.safe_yfinance_fetch(ticker, "2d", "1d")
+            
+            if hist is not None and not hist.empty:
+                try:
                     current = hist["Close"].iloc[-1]
                     prev_close = hist["Close"].iloc[0]
                     change_pct = (current - prev_close) / prev_close * 100
                     
                     # Get intraday data for the main chart
-                    intraday = stock.history(period="1d", interval="5m") if name == "S&P 500" else None
+                    intraday = self.safe_yfinance_fetch(ticker, "1d", "5m") if name == "S&P 500" else None
                     
                     data.append({
                         "Index": name,
@@ -171,8 +187,8 @@ class DataManager:
                         "Intraday": intraday,
                         "Updated": datetime.datetime.now(TIME_ZONE)
                     })
-            except Exception as e:
-                st.error(f"Error fetching {name}: {str(e)}")
+                except Exception as e:
+                    st.error(f"Error processing {name} data: {str(e)}")
         
         return data
     
@@ -245,11 +261,10 @@ class DataManager:
         
         results = []
         for name, config in commodities.items():
-            try:
-                ticker = yf.Ticker(config["ticker"])
-                hist = ticker.history(period="2d", interval="1d")
-                
-                if not hist.empty:
+            hist = self.safe_yfinance_fetch(config["ticker"], "2d", "1d")
+            
+            if hist is not None and not hist.empty:
+                try:
                     current = hist["Close"].iloc[-1]
                     prev_close = hist["Close"].iloc[0]
                     change_pct = (current - prev_close) / prev_close * 100
@@ -261,8 +276,8 @@ class DataManager:
                         "Change %": change_pct,
                         "Updated": datetime.datetime.now(TIME_ZONE)
                     })
-            except Exception as e:
-                st.error(f"Error fetching {name}: {str(e)}")
+                except Exception as e:
+                    st.error(f"Error processing {name} data: {str(e)}")
         
         return results
     
@@ -271,7 +286,8 @@ class DataManager:
         now = datetime.datetime.now(TIME_ZONE)
         
         try:
-            vix = yf.Ticker("^VIX").history(period="1d").iloc[0]["Close"]
+            vix_hist = self.safe_yfinance_fetch("^VIX", "1d", "1d")
+            vix = vix_hist.iloc[0]["Close"] if vix_hist is not None else 20
         except Exception as e:
             st.error(f"Error fetching VIX: {str(e)}")
             vix = 20  # Default value
@@ -280,7 +296,7 @@ class DataManager:
             "VIX": {
                 "value": vix,
                 "level": "High" if vix > 30 else "Elevated" if vix > 20 else "Normal",
-                "history": yf.Ticker("^VIX").history(period="1mo")["Close"],
+                "history": self.safe_yfinance_fetch("^VIX", "1mo", "1d")["Close"],
                 "updated": now
             },
             "GPR": {
@@ -459,10 +475,7 @@ if data_manager.cache["market"]:
         # Performance table with fallback for st_aggrid
         df_market = pd.DataFrame(market_data)
         df_market = df_market[["Index", "Price", "Change", "Change %", "Updated"]]
-        
-        # Convert datetime columns to strings
-        if 'Updated' in df_market.columns:
-            df_market['Updated'] = df_market['Updated'].astype(str)
+        df_market = convert_datetime_columns(df_market)
         
         if AGGRID_AVAILABLE:
             try:
@@ -489,7 +502,7 @@ if data_manager.cache["market"]:
                     allow_unsafe_jscode=True
                 )
             except Exception as e:
-                st.error(f"Error displaying AgGrid table: {str(e)}")
+                st.warning(f"AgGrid display failed: {str(e)} - Using standard table")
                 st.dataframe(df_market.style.format({
                     "Price": "{:,.2f}",
                     "Change": "{:,.2f}",
@@ -586,10 +599,7 @@ st.markdown('<div class="section-header">⛏️ Commodities</div>', unsafe_allow
 if data_manager.cache["commodities"]:
     commodities_data = data_manager.cache["commodities"]
     df_commodities = pd.DataFrame(commodities_data)
-    
-    # Convert datetime columns to strings
-    if 'Updated' in df_commodities.columns:
-        df_commodities['Updated'] = df_commodities['Updated'].astype(str)
+    df_commodities = convert_datetime_columns(df_commodities)
     
     if AGGRID_AVAILABLE:
         try:
@@ -612,7 +622,7 @@ if data_manager.cache["commodities"]:
                 allow_unsafe_jscode=True
             )
         except Exception as e:
-            st.error(f"Error displaying AgGrid table: {str(e)}")
+            st.warning(f"AgGrid display failed: {str(e)} - Using standard table")
             st.dataframe(df_commodities.style.format({
                 "Price": "{:,.2f}",
                 "Change %": "{:,.2f}%"
