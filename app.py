@@ -8,8 +8,6 @@ import plotly.graph_objects as go
 import datetime
 import time
 import threading
-import queue
-import requests
 import pytz
 from dateutil.relativedelta import relativedelta
 import warnings
@@ -129,7 +127,6 @@ class DataManager:
             "rates": None,
             "commodities": None,
             "risk": None,
-            "sentiment": None,
             "news": None
         }
         self.last_updated = datetime.datetime.now(TIME_ZONE)
@@ -463,32 +460,47 @@ if data_manager.cache["market"]:
         df_market = pd.DataFrame(market_data)
         df_market = df_market[["Index", "Price", "Change", "Change %", "Updated"]]
         
+        # Convert datetime columns to strings
+        if 'Updated' in df_market.columns:
+            df_market['Updated'] = df_market['Updated'].astype(str)
+        
         if AGGRID_AVAILABLE:
-            gb = GridOptionsBuilder.from_dataframe(df_market)
-            gb.configure_default_column(
-                filterable=True,
-                sortable=True,
-                resizable=True,
-                editable=False
-            )
-            gb.configure_column("Change %", 
-                              cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
-            
-            AgGrid(
-                df_market,
-                gridOptions=gb.build(),
-                height=400,
-                theme="streamlit",
-                fit_columns_on_grid_load=True
-            )
+            try:
+                gb = GridOptionsBuilder.from_dataframe(df_market)
+                gb.configure_default_column(
+                    filterable=True,
+                    sortable=True,
+                    resizable=True,
+                    editable=False,
+                    wrapText=True,
+                    autoHeight=True
+                )
+                gb.configure_column("Change %", 
+                                  cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
+                
+                gridOptions = gb.build()
+                
+                AgGrid(
+                    df_market,
+                    gridOptions=gridOptions,
+                    height=400,
+                    theme='streamlit',
+                    fit_columns_on_grid_load=True,
+                    allow_unsafe_jscode=True
+                )
+            except Exception as e:
+                st.error(f"Error displaying AgGrid table: {str(e)}")
+                st.dataframe(df_market.style.format({
+                    "Price": "{:,.2f}",
+                    "Change": "{:,.2f}",
+                    "Change %": "{:,.2f}%"
+                }), height=400)
         else:
-            # Format the DataFrame for better display
-            styled_df = df_market.style.format({
+            st.dataframe(df_market.style.format({
                 "Price": "{:,.2f}",
                 "Change": "{:,.2f}",
                 "Change %": "{:,.2f}%"
-            })
-            st.dataframe(styled_df, height=400)
+            }), height=400)
 
 # ===== ECONOMIC INDICATORS =====
 st.markdown('<div class="section-header">📊 Economic Indicators</div>', unsafe_allow_html=True)
@@ -573,35 +585,43 @@ st.markdown('<div class="section-header">⛏️ Commodities</div>', unsafe_allow
 
 if data_manager.cache["commodities"]:
     commodities_data = data_manager.cache["commodities"]
-    
-    # Display commodities in a table
     df_commodities = pd.DataFrame(commodities_data)
-    df_commodities = df_commodities[["Commodity", "Price", "Unit", "Change %", "Updated"]]
+    
+    # Convert datetime columns to strings
+    if 'Updated' in df_commodities.columns:
+        df_commodities['Updated'] = df_commodities['Updated'].astype(str)
     
     if AGGRID_AVAILABLE:
-        gb = GridOptionsBuilder.from_dataframe(df_commodities)
-        gb.configure_default_column(
-            filterable=True,
-            sortable=True,
-            resizable=True,
-            editable=False
-        )
-        gb.configure_column("Change %", 
-                          cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
-        
-        AgGrid(
-            df_commodities,
-            gridOptions=gb.build(),
-            height=300,
-            theme="streamlit",
-            fit_columns_on_grid_load=True
-        )
+        try:
+            gb = GridOptionsBuilder.from_dataframe(df_commodities)
+            gb.configure_default_column(
+                filterable=True,
+                sortable=True,
+                resizable=True,
+                editable=False
+            )
+            gb.configure_column("Change %", 
+                              cellStyle=lambda v: {"color": "green" if v >= 0 else "red"})
+            
+            AgGrid(
+                df_commodities,
+                gridOptions=gb.build(),
+                height=300,
+                theme="streamlit",
+                fit_columns_on_grid_load=True,
+                allow_unsafe_jscode=True
+            )
+        except Exception as e:
+            st.error(f"Error displaying AgGrid table: {str(e)}")
+            st.dataframe(df_commodities.style.format({
+                "Price": "{:,.2f}",
+                "Change %": "{:,.2f}%"
+            }), height=300)
     else:
-        styled_df = df_commodities.style.format({
+        st.dataframe(df_commodities.style.format({
             "Price": "{:,.2f}",
             "Change %": "{:,.2f}%"
-        })
-        st.dataframe(styled_df, height=300)
+        }), height=300)
 
 # ===== RISK & SENTIMENT =====
 st.markdown('<div class="section-header">⚠️ Risk & Sentiment</div>', unsafe_allow_html=True)
