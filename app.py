@@ -12,8 +12,6 @@ import queue
 import requests
 from bs4 import BeautifulSoup
 
-from streamlit_autorefresh import st_autorefresh
-
 # Config
 st.set_page_config(layout="wide", page_title="Real-Time Global Macro Dashboard", page_icon="🌍")
 st.title("🌍 Real-Time Global Macro Dashboard")
@@ -85,7 +83,7 @@ class RealTimeDataManager:
             "FTSE 100": "^FTSE",
             "DAX": "^GDAXI",
             "Nikkei 225": "^N225",
-            "Shanghai Composite": "^SSEC"
+            # "Shanghai Composite": "^SSEC",  # Uncomment if supported in your region
         }
         
         market_data = []
@@ -103,27 +101,25 @@ class RealTimeDataManager:
                         "Change (%)": change,
                         "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
                     })
+                else:
+                    st.warning(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
             except Exception as e:
-                st.error(f"Error fetching {name} data: {str(e)}")
-        
+                st.warning(f"Error fetching {name} data: {str(e)}")
         return market_data
     
     def fetch_economic_data(self):
         """Fetch economic indicators from FRED"""
         try:
-            # GDP data
             gdp_series = fred.get_series("GDPC1")
             us_gdp = gdp_series.tail(1).values[0]
             prev_gdp = gdp_series.tail(2).values[0]
             gdp_change = ((us_gdp - prev_gdp) / prev_gdp) * 100
             
-            # Inflation data
             inflation_series = fred.get_series("CPIAUCSL").pct_change(12) * 100
             us_inflation = inflation_series.tail(1).values[0]
             prev_inflation = inflation_series.tail(2).values[0]
             inflation_change = us_inflation - prev_inflation
             
-            # Unemployment
             unemp_series = fred.get_series("UNRATE")
             us_unemp = unemp_series.tail(1).values[0]
             prev_unemp = unemp_series.tail(2).values[0]
@@ -139,22 +135,18 @@ class RealTimeDataManager:
                 "last_update": datetime.datetime.now().strftime('%H:%M:%S')
             }
         except Exception as e:
-            st.error(f"Error fetching economic data: {str(e)}")
+            st.warning(f"Error fetching economic data: {str(e)}")
             return None
     
     def fetch_central_bank_rates(self):
         """Fetch central bank rates"""
         try:
-            # Federal Reserve rate
             fed_rate_series = fred.get_series("FEDFUNDS")
             fed_rate = fed_rate_series.tail(1).values[0]
             prev_fed_rate = fed_rate_series.tail(2).values[0]
             fed_change = fed_rate - prev_fed_rate
             
-            # ECB rate (using web scraping as example)
             ecb_rate, ecb_change = self._scrape_ecb_rate()
-            
-            # BOJ rate (static for example)
             boj_rate = -0.10
             boj_change = 0.00
             
@@ -168,14 +160,12 @@ class RealTimeDataManager:
                 "last_update": datetime.datetime.now().strftime('%H:%M:%S')
             }
         except Exception as e:
-            st.error(f"Error fetching central bank rates: {str(e)}")
+            st.warning(f"Error fetching central bank rates: {str(e)}")
             return None
     
     def _scrape_ecb_rate(self):
-        """Example of web scraping for ECB rate (mock implementation)"""
-        # In a real implementation, you would scrape the ECB website
-        # This is a mock that returns random values around the current rate
-        return 4.25, 0.0  # Rate and change
+        # Mock - real implementation would scrape or API call
+        return 4.25, 0.0
     
     def fetch_commodities(self):
         """Fetch real-time commodities data"""
@@ -187,7 +177,6 @@ class RealTimeDataManager:
             "Copper": "HG=F",
             "Wheat": "ZW=F"
         }
-        
         comm_data = []
         for name, ticker in commodities.items():
             try:
@@ -203,30 +192,20 @@ class RealTimeDataManager:
                         "Change (%)": change,
                         "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
                     })
+                else:
+                    st.warning(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
             except Exception as e:
-                st.error(f"Error fetching {name} data: {str(e)}")
-        
+                st.warning(f"Error fetching {name} data: {str(e)}")
         return comm_data
     
     def fetch_gpr_index(self):
-        """Fetch/simulate Geopolitical Risk Index"""
-        # In a real implementation, you would fetch from a GPR API
-        # This is a simulation that creates realistic-looking data
         dates = pd.date_range(end=datetime.datetime.now(), periods=30)
         base_risk = 50 + np.random.normal(0, 2, 30)
-        
-        # Add some event spikes
         for i in [5, 15, 25]:
             base_risk[i] += 15 * np.random.random()
-            # Let the effect decay over time
             for j in range(i+1, min(i+6, 30)):
                 base_risk[j] += (15 - (j-i)*3) * np.random.random()
-        
-        gpr_data = pd.DataFrame({
-            "Date": dates,
-            "Risk_Index": base_risk
-        })
-        
+        gpr_data = pd.DataFrame({"Date": dates, "Risk_Index": base_risk})
         return {
             "data": gpr_data,
             "current_value": base_risk[-1],
@@ -234,31 +213,26 @@ class RealTimeDataManager:
         }
     
     def data_fetcher_thread(self):
-        """Thread that continuously fetches data"""
         while not self.stop_thread:
             try:
-                # Fetch all data
                 self.cache["market_data"] = self.fetch_market_data()
                 self.cache["economic_data"] = self.fetch_economic_data()
                 self.cache["central_bank_rates"] = self.fetch_central_bank_rates()
                 self.cache["commodities"] = self.fetch_commodities()
                 self.cache["gpr_index"] = self.fetch_gpr_index()
-                
                 self.last_update = datetime.datetime.now()
-                time.sleep(60)  # Update every 60 seconds
+                time.sleep(60)
             except Exception as e:
-                st.error(f"Error in data fetcher thread: {str(e)}")
-                time.sleep(10)  # Wait before retrying
+                st.warning(f"Error in data fetcher thread: {str(e)}")
+                time.sleep(10)
     
     def start(self):
-        """Start the real-time data fetching"""
         self.stop_thread = False
         thread = Thread(target=self.data_fetcher_thread)
         thread.daemon = True
         thread.start()
     
     def stop(self):
-        """Stop the real-time data fetching"""
         self.stop_thread = True
 
 # Initialize and start the data manager
@@ -274,90 +248,80 @@ with col1:
 
 with col2:
     if st.button("🔄 Manual Refresh"):
-        # Force a refresh by clearing cache
         data_manager.last_update = datetime.datetime.now()
-        st.experimental_rerun()
+        try:
+            st.rerun()  # Streamlit >=1.27
+        except AttributeError:
+            pass  # For older Streamlit, browser refresh required
 
 with col3:
     time_range = st.selectbox("Time Range", ["1D", "1W", "1M", "3M", "1Y"], index=0)
 
-# Convert time range to period
-time_map = {
-    "1D": "1d",
-    "1W": "1wk",
-    "1M": "1mo",
-    "3M": "3mo",
-    "1Y": "1y"
-}
+time_map = {"1D": "1d", "1W": "1wk", "1M": "1mo", "3M": "3mo", "1Y": "1y"}
 period = time_map[time_range]
 
 # ========== 2. Real-Time Market Overview ==========
 st.header("📈 Real-Time Market Overview", divider="rainbow")
-
-# Market indices
 if data_manager.cache["market_data"]:
     df_market = pd.DataFrame(data_manager.cache["market_data"])
-    
-    # Display real-time market data
-    cols = st.columns(4)
-    for idx, row in df_market.head(4).iterrows():
-        with cols[idx % 4]:
-            change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-            change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">{row['Index']}</div>
-                <div class="metric-value">${row['Price']:,.2f}</div>
-                <div class="metric-change {change_class}">
-                    {change_arrow} {abs(row['Change (%)']):.2f}% 
-                    <span style="font-size: 12px;">({row['Last Update']})</span>
+    if not df_market.empty:
+        cols = st.columns(4)
+        for idx, row in df_market.head(4).iterrows():
+            with cols[idx % 4]:
+                change_class = "positive" if row["Change (%)"] >= 0 else "negative"
+                change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">{row['Index']}</div>
+                    <div class="metric-value">${row['Price']:,.2f}</div>
+                    <div class="metric-change {change_class}">
+                        {change_arrow} {abs(row['Change (%)']):.2f}% 
+                        <span style="font-size: 12px;">({row['Last Update']})</span>
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Show full market data table
-    with st.expander("View All Market Indices"):
-        st.dataframe(
-            df_market.sort_values("Change (%)", ascending=False),
-            column_config={
-                "Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-    
-    # Real-time chart for selected index
-    selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
-    selected_ticker = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
-                      "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"}[selected_index]
-    
-    # Get intraday data for the selected index
-    intraday_data = yf.Ticker(selected_ticker).history(period="1d", interval="5m")
-    if not intraday_data.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=intraday_data.index,
-            y=intraday_data["Close"],
-            name="Price",
-            line=dict(color='royalblue', width=2)
-        ))
-        
-        fig.update_layout(
-            title=f"Intraday {selected_index} Price",
-            xaxis_title="Time",
-            yaxis_title="Price",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+                """, unsafe_allow_html=True)
+        with st.expander("View All Market Indices"):
+            st.dataframe(
+                df_market.sort_values("Change (%)", ascending=False),
+                column_config={
+                    "Price": st.column_config.NumberColumn(format="$%.2f"),
+                    "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
+        # Only offer what you have
+        ticker_map = {
+            "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
+            "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"
+            # "Shanghai Composite": "^SSEC"
+        }
+        selected_ticker = ticker_map[selected_index]
+        try:
+            intraday_data = yf.Ticker(selected_ticker).history(period="1d", interval="5m")
+            if not intraday_data.empty:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=intraday_data.index,
+                    y=intraday_data["Close"],
+                    name="Price",
+                    line=dict(color='royalblue', width=2)
+                ))
+                fig.update_layout(
+                    title=f"Intraday {selected_index} Price",
+                    xaxis_title="Time",
+                    yaxis_title="Price",
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Could not display chart for {selected_index}: {str(e)}")
 
 # ========== 3. Real-Time Economic Indicators ==========
 st.header("📊 Real-Time Economic Indicators", divider="rainbow")
-
 if data_manager.cache["economic_data"]:
     econ_data = data_manager.cache["economic_data"]
-    
-    # Create metric cards with trends
     col1, col2, col3 = st.columns(3)
     with col1:
         change_class = "positive" if econ_data["gdp_change"] > 0 else "negative"
@@ -371,7 +335,6 @@ if data_manager.cache["economic_data"]:
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
     with col2:
         change_class = "positive" if econ_data["inflation_change"] < 0 else "negative"
         st.markdown(f"""
@@ -384,7 +347,6 @@ if data_manager.cache["economic_data"]:
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
     with col3:
         change_class = "positive" if econ_data["unemp_change"] < 0 else "negative"
         st.markdown(f"""
@@ -400,10 +362,8 @@ if data_manager.cache["economic_data"]:
 
 # ========== 4. Real-Time Central Bank Rates ==========
 st.header("🏦 Real-Time Central Bank Rates", divider="rainbow")
-
 if data_manager.cache["central_bank_rates"]:
     rates_data = data_manager.cache["central_bank_rates"]
-    
     col1, col2, col3 = st.columns(3)
     with col1:
         change_class = "positive" if rates_data["fed_change"] < 0 else "negative"
@@ -417,7 +377,6 @@ if data_manager.cache["central_bank_rates"]:
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
     with col2:
         change_class = "positive" if rates_data["ecb_change"] < 0 else "negative"
         st.markdown(f"""
@@ -430,7 +389,6 @@ if data_manager.cache["central_bank_rates"]:
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
     with col3:
         change_class = "positive" if rates_data["boj_change"] < 0 else "negative"
         st.markdown(f"""
@@ -446,46 +404,39 @@ if data_manager.cache["central_bank_rates"]:
 
 # ========== 5. Real-Time Commodities ==========
 st.header("🛢️ Real-Time Commodities", divider="rainbow")
-
 if data_manager.cache["commodities"]:
     df_comm = pd.DataFrame(data_manager.cache["commodities"])
-    
-    # Display top commodities
-    cols = st.columns(4)
-    for idx, row in df_comm.head(4).iterrows():
-        with cols[idx % 4]:
-            change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-            change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">{row['Commodity']}</div>
-                <div class="metric-value">${row['Price']:,.2f}</div>
-                <div class="metric-change {change_class}">
-                    {change_arrow} {abs(row['Change (%)']):.2f}% 
-                    <span style="font-size: 12px;">({row['Last Update']})</span>
+    if not df_comm.empty:
+        cols = st.columns(4)
+        for idx, row in df_comm.head(4).iterrows():
+            with cols[idx % 4]:
+                change_class = "positive" if row["Change (%)"] >= 0 else "negative"
+                change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">{row['Commodity']}</div>
+                    <div class="metric-value">${row['Price']:,.2f}</div>
+                    <div class="metric-change {change_class}">
+                        {change_arrow} {abs(row['Change (%)']):.2f}% 
+                        <span style="font-size: 12px;">({row['Last Update']})</span>
+                    </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Show full commodities table
-    with st.expander("View All Commodities"):
-        st.dataframe(
-            df_comm.sort_values("Change (%)", ascending=False),
-            column_config={
-                "Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
+                """, unsafe_allow_html=True)
+        with st.expander("View All Commodities"):
+            st.dataframe(
+                df_comm.sort_values("Change (%)", ascending=False),
+                column_config={
+                    "Price": st.column_config.NumberColumn(format="$%.2f"),
+                    "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
 
 # ========== 6. Real-Time Geopolitical Risk ==========
 st.header("⚠️ Real-Time Geopolitical Risk Index", divider="rainbow")
-
 if data_manager.cache["gpr_index"]:
     gpr_data = data_manager.cache["gpr_index"]
-    
-    # Current risk level with color coding
     risk_level = gpr_data["current_value"]
     if risk_level < 40:
         risk_color = "green"
@@ -496,7 +447,6 @@ if data_manager.cache["gpr_index"]:
     else:
         risk_color = "red"
         risk_text = "High"
-    
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Current Geopolitical Risk Level</div>
@@ -506,8 +456,6 @@ if data_manager.cache["gpr_index"]:
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Risk trend chart
     fig = px.line(
         gpr_data["data"], 
         x="Date", 
@@ -521,9 +469,7 @@ if data_manager.cache["gpr_index"]:
 
 # ========== 7. News Feed ==========
 st.header("📰 Latest Economic News", divider="rainbow")
-
 def fetch_economic_news():
-    """Simulate fetching economic news (in a real app, use NewsAPI or similar)"""
     news_items = [
         {
             "title": "Fed Signals Potential Rate Cuts Later This Year",
@@ -566,6 +512,3 @@ st.markdown("""
     <p>Disclaimer: This dashboard is for informational purposes only. Data may be delayed.</p>
 </div>
 """.format(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')), unsafe_allow_html=True)
-
-# ---- Auto-refresh every 60 seconds ----
-st_autorefresh(interval=60 * 1000, key="refresh")
