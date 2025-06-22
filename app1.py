@@ -8,7 +8,6 @@ import datetime
 import time
 import threading
 import pytz
-from dateutil.relativedelta import relativedelta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -39,7 +38,6 @@ except Exception as e:
 TIME_ZONE = pytz.timezone('America/New_York')
 REFRESH_INTERVAL = 60  # seconds
 
-# ==================== STYLING ====================
 st.markdown("""
 <style>
     .main { background-color: #f8f9fa; }
@@ -64,7 +62,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== DATA MANAGER ====================
 class DataManager:
     def __init__(self):
         self.data_lock = threading.Lock()
@@ -274,7 +271,6 @@ class DataManager:
         self.stop_event.set()
         self.thread.join()
 
-# Initialize data manager
 if 'data_manager' not in st.session_state:
     data_manager = DataManager()
     data_manager.start()
@@ -282,7 +278,6 @@ if 'data_manager' not in st.session_state:
 else:
     data_manager = st.session_state.data_manager
 
-# ==================== SIDEBAR ====================
 with st.sidebar:
     st.image("https://via.placeholder.com/150x50?text=Macro+Pro", width=150)
     st.markdown("## Dashboard Controls")
@@ -311,7 +306,6 @@ with st.sidebar:
     Data updates every 60 seconds  
     """)
 
-# ==================== MAIN DASHBOARD ====================
 st.markdown(f"""
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
     <h1 style="margin: 0;">Global Macro Pro Dashboard</h1>
@@ -445,11 +439,17 @@ with st.spinner("Fetching index data..."):
             continue
 
     df_prices = pd.DataFrame(price_hist)
+    df_prices = df_prices.sort_index()
+    df_prices = df_prices.ffill()
     df_prices = df_prices.dropna(how="all")
-    if not df_prices.empty:
-        df_norm = df_prices / df_prices.iloc[0] * 100
+    
+    min_points = 10
+    cols_to_plot = [col for col in df_prices.columns if df_prices[col].count() >= min_points]
+
+    if cols_to_plot:
+        df_norm = df_prices[cols_to_plot] / df_prices[cols_to_plot].iloc[0] * 100
     else:
-        df_norm = df_prices
+        df_norm = pd.DataFrame()
 
     fig_norm = go.Figure()
     for col in df_norm.columns:
@@ -473,11 +473,8 @@ with st.spinner("Fetching index data..."):
         st.warning(
             f"⚠️ No price data found for: {', '.join(missing_indices)}. These indices are excluded from the chart."
         )
-
-# (rest of your app remains unchanged: Economic Indicators, Central Bank Rates, Commodities, etc.)
-# ... (copy/paste the rest of your existing script here)
-# To save space, previous sections are omitted since they are unchanged and already pasted above.
-# You can copy all remaining sections (Economic Indicators, Central Bank Rates, etc.) from your previous script.
+    if not cols_to_plot:
+        st.info("No valid price series available for the selected indices and period.")
 
 # ===== ECONOMIC INDICATORS =====
 st.markdown('<div class="section-header">📊 Economic Indicators</div>', unsafe_allow_html=True)
@@ -510,7 +507,7 @@ if data_manager.cache["economic"]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# (rest of your sections are unchanged from prior script—copy them here as needed)
+# (Other dashboard sections: Central Bank Rates, Commodities, etc., unchanged from prior script...)
 
 # ===== FOOTER =====
 st.markdown("---")
