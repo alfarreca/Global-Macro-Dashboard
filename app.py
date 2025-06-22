@@ -14,9 +14,6 @@ from bs4 import BeautifulSoup
 
 # Config
 st.set_page_config(layout="wide", page_title="Real-Time Global Macro Dashboard", page_icon="🌍")
-st.title("🌍 Real-Time Global Macro Dashboard")
-
-fred = Fred(api_key=st.secrets["FRED_API_KEY"])
 
 # CSS
 st.markdown("""
@@ -56,8 +53,57 @@ st.markdown("""
     @keyframes blink-animation {
         to { visibility: hidden; }
     }
+    /* Sidebar styling */
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
+    }
+    .sidebar .sidebar-section {
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# Initialize Fred API
+fred = Fred(api_key=st.secrets["FRED_API_KEY"])
+
+# Sidebar Menu
+with st.sidebar:
+    st.title("🌍 Navigation")
+    
+    # Dashboard sections
+    selected_section = st.radio(
+        "Go to:",
+        ["📊 Full Dashboard", "📈 Markets", "🏦 Central Banks", "🛢️ Commodities", "⚠️ Geopolitical Risk"],
+        index=0
+    )
+    
+    st.markdown("---")
+    st.markdown("### 🔧 Settings")
+    
+    # Time range selector in sidebar
+    time_range = st.selectbox(
+        "Chart Time Range", 
+        ["1D", "1W", "1M", "3M", "1Y"], 
+        index=0
+    )
+    time_map = {"1D": "1d", "1W": "1wk", "1M": "1mo", "3M": "3mo", "1Y": "1y"}
+    period = time_map[time_range]
+    
+    # Refresh options
+    st.markdown("### 🔄 Refresh Options")
+    auto_refresh = st.checkbox("Auto-refresh every minute", value=True)
+    if st.button("Manual Refresh Now"):
+        st.rerun()
+    
+    st.markdown("---")
+    st.markdown("### ℹ️ About")
+    st.markdown("""
+    This dashboard provides real-time global macroeconomic data and market indicators.
+    Data sources include FRED, Yahoo Finance, and other public APIs.
+    """)
+
+# Main content
+st.title("🌍 Real-Time Global Macro Dashboard")
 
 class RealTimeDataManager:
     def __init__(self):
@@ -81,7 +127,6 @@ class RealTimeDataManager:
             "FTSE 100": "^FTSE",
             "DAX": "^GDAXI",
             "Nikkei 225": "^N225",
-            # "Shanghai Composite": "^SSEC",
         }
         market_data = []
         for name, ticker in indices.items():
@@ -240,48 +285,188 @@ if data_manager.errors:
         st.warning(err)
     data_manager.errors.clear()
 
-col1, col2, col3 = st.columns([2,1,1])
+# Status bar at top
+col1, col2 = st.columns([4,1])
 with col1:
     last_update_str = data_manager.last_update.strftime('%Y-%m-%d %H:%M:%S')
     st.markdown(f"**Last Updated:** <span class='blink'>{last_update_str}</span>", unsafe_allow_html=True)
 
 with col2:
-    if st.button("🔄 Manual Refresh"):
+    if st.button("🔄 Refresh Now"):
         data_manager.last_update = datetime.datetime.now()
-        try:
-            st.rerun()
-        except AttributeError:
-            pass
+        st.rerun()
 
-with col3:
-    time_range = st.selectbox("Time Range", ["1D", "1W", "1M", "3M", "1Y"], index=0)
-time_map = {"1D": "1d", "1W": "1wk", "1M": "1mo", "3M": "3mo", "1Y": "1y"}
-period = time_map[time_range]
+# Show sections based on sidebar selection
+if selected_section == "📊 Full Dashboard" or selected_section == "📈 Markets":
+    # ----- Real-Time Market Overview -----
+    st.header("📈 Real-Time Market Overview", divider="rainbow")
+    if data_manager.cache["market_data"] is not None:
+        df_market = pd.DataFrame(data_manager.cache["market_data"])
+        if not df_market.empty:
+            cols = st.columns(4)
+            for idx, row in df_market.head(4).iterrows():
+                with cols[idx % 4]:
+                    change_class = "positive" if row["Change (%)"] >= 0 else "negative"
+                    change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-title">{row['Index']}</div>
+                        <div class="metric-value">${row['Price']:,.2f}</div>
+                        <div class="metric-change {change_class}">
+                            {change_arrow} {abs(row['Change (%)']):.2f}% 
+                            <span style="font-size: 12px;">({row['Last Update']})</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            with st.expander("View All Market Indices"):
+                if not df_market.empty:
+                    st.dataframe(
+                        df_market.sort_values("Change (%)", ascending=False),
+                        column_config={
+                            "Price": st.column_config.NumberColumn(format="$%.2f"),
+                            "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("No market data available.")
+            if not df_market.empty:
+                selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
+                ticker_map = {
+                    "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
+                    "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"
+                }
+                selected_ticker = ticker_map[selected_index]
+                try:
+                    intraday_data = yf.Ticker(selected_ticker).history(period="1d", interval="5m")
+                    if not intraday_data.empty:
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=intraday_data.index,
+                            y=intraday_data["Close"],
+                            name="Price",
+                            line=dict(color='royalblue', width=2)
+                        ))
+                        fig.update_layout(
+                            title=f"Intraday {selected_index} Price",
+                            xaxis_title="Time",
+                            yaxis_title="Price",
+                            hovermode="x unified"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not display chart for {selected_index}: {str(e)}")
+        else:
+            st.info("No market data available.")
+    else:
+        st.info("No market data available.")
 
-# ----- Real-Time Market Overview -----
-st.header("📈 Real-Time Market Overview", divider="rainbow")
-if data_manager.cache["market_data"] is not None:
-    df_market = pd.DataFrame(data_manager.cache["market_data"])
-    if not df_market.empty:
-        cols = st.columns(4)
-        for idx, row in df_market.head(4).iterrows():
-            with cols[idx % 4]:
-                change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-                change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+if selected_section == "📊 Full Dashboard":
+    # ----- Real-Time Economic Indicators -----
+    st.header("📊 Real-Time Economic Indicators", divider="rainbow")
+    if data_manager.cache["economic_data"] is not None:
+        econ_data = data_manager.cache["economic_data"]
+        if econ_data:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                change_class = "positive" if econ_data["gdp_change"] > 0 else "negative"
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="metric-title">{row['Index']}</div>
-                    <div class="metric-value">${row['Price']:,.2f}</div>
+                    <div class="metric-title">US GDP (Latest QoQ)</div>
+                    <div class="metric-value">${econ_data["us_gdp"]:,.2f}B</div>
                     <div class="metric-change {change_class}">
-                        {change_arrow} {abs(row['Change (%)']):.2f}% 
-                        <span style="font-size: 12px;">({row['Last Update']})</span>
+                        {'+' if econ_data["gdp_change"] > 0 else ''}{econ_data["gdp_change"]:.1f}% from previous
+                        <span style="font-size: 12px;">({econ_data["last_update"]})</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-        with st.expander("View All Market Indices"):
-            if not df_market.empty:
+            with col2:
+                change_class = "positive" if econ_data["inflation_change"] < 0 else "negative"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">US Inflation (YoY)</div>
+                    <div class="metric-value">{econ_data["us_inflation"]:.1f}%</div>
+                    <div class="metric-change {change_class}">
+                        {'+' if econ_data["inflation_change"] > 0 else ''}{econ_data["inflation_change"]:.1f}% from previous
+                        <span style="font-size: 12px;">({econ_data["last_update"]})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col3:
+                change_class = "positive" if econ_data["unemp_change"] < 0 else "negative"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">US Unemployment Rate</div>
+                    <div class="metric-value">{econ_data["us_unemp"]:.1f}%</div>
+                    <div class="metric-change {change_class}">
+                        {'+' if econ_data["unemp_change"] > 0 else ''}{econ_data["unemp_change"]:.1f}% from previous
+                        <span style="font-size: 12px;">({econ_data["last_update"]})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No economic data available.")
+    else:
+        st.info("No economic data available.")
+
+if selected_section == "📊 Full Dashboard" or selected_section == "🏦 Central Banks":
+    # ----- Real-Time Central Bank Rates -----
+    st.header("🏦 Real-Time Central Bank Rates", divider="rainbow")
+    if data_manager.cache["central_bank_rates"] is not None:
+        rates_data = data_manager.cache["central_bank_rates"]
+        if rates_data:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                change_class = "positive" if rates_data["fed_change"] < 0 else "negative"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">Federal Reserve Rate</div>
+                    <div class="metric-value">{rates_data["fed_rate"]:.2f}%</div>
+                    <div class="metric-change {change_class}">
+                        {'+' if rates_data["fed_change"] > 0 else ''}{rates_data["fed_change"]:.2f}% from previous
+                        <span style="font-size: 12px;">({rates_data["last_update"]})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                change_class = "positive" if rates_data["ecb_change"] < 0 else "negative"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">ECB Main Refinancing Rate</div>
+                    <div class="metric-value">{rates_data["ecb_rate"]:.2f}%</div>
+                    <div class="metric-change {change_class}">
+                        {'+' if rates_data["ecb_change"] > 0 else ''}{rates_data["ecb_change"]:.2f}% from previous
+                        <span style="font-size: 12px;">({rates_data["last_update"]})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col3:
+                change_class = "positive" if rates_data["boj_change"] < 0 else "negative"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">BOJ Policy Rate</div>
+                    <div class="metric-value">{rates_data["boj_rate"]:.2f}%</div>
+                    <div class="metric-change {change_class}">
+                        {'+' if rates_data["boj_change"] > 0 else ''}{rates_data["boj_change"]:.2f}% from previous
+                        <span style="font-size: 12px;">({rates_data["last_update"]})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No central bank data available.")
+    else:
+        st.info("No central bank data available.")
+
+if selected_section == "📊 Full Dashboard" or selected_section == "🛢️ Commodities":
+    # ----- Real-Time Commodities -----
+    st.header("🛢️ Real-Time Commodities", divider="rainbow")
+    if data_manager.cache["commodities"] is not None:
+        df_comm = pd.DataFrame(data_manager.cache["commodities"])
+        with st.expander("View All Commodities"):
+            if not df_comm.empty:
                 st.dataframe(
-                    df_market.sort_values("Change (%)", ascending=False),
+                    df_comm.sort_values("Change (%)", ascending=False),
                     column_config={
                         "Price": st.column_config.NumberColumn(format="$%.2f"),
                         "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
@@ -290,248 +475,108 @@ if data_manager.cache["market_data"] is not None:
                     use_container_width=True
                 )
             else:
-                st.info("No market data available.")
-        if not df_market.empty:
-            selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
-            ticker_map = {
-                "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
-                "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"
-            }
-            selected_ticker = ticker_map[selected_index]
-            try:
-                intraday_data = yf.Ticker(selected_ticker).history(period="1d", interval="5m")
-                if not intraday_data.empty:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(
-                        x=intraday_data.index,
-                        y=intraday_data["Close"],
-                        name="Price",
-                        line=dict(color='royalblue', width=2)
-                    ))
-                    fig.update_layout(
-                        title=f"Intraday {selected_index} Price",
-                        xaxis_title="Time",
-                        yaxis_title="Price",
-                        hovermode="x unified"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Could not display chart for {selected_index}: {str(e)}")
-    else:
-        st.info("No market data available.")
-else:
-    st.info("No market data available.")
-
-# ----- Real-Time Economic Indicators -----
-st.header("📊 Real-Time Economic Indicators", divider="rainbow")
-if data_manager.cache["economic_data"] is not None:
-    econ_data = data_manager.cache["economic_data"]
-    if econ_data:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            change_class = "positive" if econ_data["gdp_change"] > 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">US GDP (Latest QoQ)</div>
-                <div class="metric-value">${econ_data["us_gdp"]:,.2f}B</div>
-                <div class="metric-change {change_class}">
-                    {'+' if econ_data["gdp_change"] > 0 else ''}{econ_data["gdp_change"]:.1f}% from previous
-                    <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            change_class = "positive" if econ_data["inflation_change"] < 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">US Inflation (YoY)</div>
-                <div class="metric-value">{econ_data["us_inflation"]:.1f}%</div>
-                <div class="metric-change {change_class}">
-                    {'+' if econ_data["inflation_change"] > 0 else ''}{econ_data["inflation_change"]:.1f}% from previous
-                    <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            change_class = "positive" if econ_data["unemp_change"] < 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">US Unemployment Rate</div>
-                <div class="metric-value">{econ_data["us_unemp"]:.1f}%</div>
-                <div class="metric-change {change_class}">
-                    {'+' if econ_data["unemp_change"] > 0 else ''}{econ_data["unemp_change"]:.1f}% from previous
-                    <span style="font-size: 12px;">({econ_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No economic data available.")
-else:
-    st.info("No economic data available.")
-
-# ----- Real-Time Central Bank Rates -----
-st.header("🏦 Real-Time Central Bank Rates", divider="rainbow")
-if data_manager.cache["central_bank_rates"] is not None:
-    rates_data = data_manager.cache["central_bank_rates"]
-    if rates_data:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            change_class = "positive" if rates_data["fed_change"] < 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">Federal Reserve Rate</div>
-                <div class="metric-value">{rates_data["fed_rate"]:.2f}%</div>
-                <div class="metric-change {change_class}">
-                    {'+' if rates_data["fed_change"] > 0 else ''}{rates_data["fed_change"]:.2f}% from previous
-                    <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            change_class = "positive" if rates_data["ecb_change"] < 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">ECB Main Refinancing Rate</div>
-                <div class="metric-value">{rates_data["ecb_rate"]:.2f}%</div>
-                <div class="metric-change {change_class}">
-                    {'+' if rates_data["ecb_change"] > 0 else ''}{rates_data["ecb_change"]:.2f}% from previous
-                    <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            change_class = "positive" if rates_data["boj_change"] < 0 else "negative"
-            st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-title">BOJ Policy Rate</div>
-                <div class="metric-value">{rates_data["boj_rate"]:.2f}%</div>
-                <div class="metric-change {change_class}">
-                    {'+' if rates_data["boj_change"] > 0 else ''}{rates_data["boj_change"]:.2f}% from previous
-                    <span style="font-size: 12px;">({rates_data["last_update"]})</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No central bank data available.")
-else:
-    st.info("No central bank data available.")
-
-# ----- Real-Time Commodities -----
-st.header("🛢️ Real-Time Commodities", divider="rainbow")
-if data_manager.cache["commodities"] is not None:
-    df_comm = pd.DataFrame(data_manager.cache["commodities"])
-    with st.expander("View All Commodities"):
+                st.info("No commodity data available.")
         if not df_comm.empty:
-            st.dataframe(
-                df_comm.sort_values("Change (%)", ascending=False),
-                column_config={
-                    "Price": st.column_config.NumberColumn(format="$%.2f"),
-                    "Change (%)": st.column_config.NumberColumn(format="%.2f%%")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+            cols = st.columns(4)
+            for idx, row in df_comm.head(4).iterrows():
+                with cols[idx % 4]:
+                    change_class = "positive" if row["Change (%)"] >= 0 else "negative"
+                    change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-title">{row['Commodity']}</div>
+                        <div class="metric-value">${row['Price']:,.2f}</div>
+                        <div class="metric-change {change_class}">
+                            {change_arrow} {abs(row['Change (%)']):.2f}% 
+                            <span style="font-size: 12px;">({row['Last Update']})</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
         else:
             st.info("No commodity data available.")
-    if not df_comm.empty:
-        cols = st.columns(4)
-        for idx, row in df_comm.head(4).iterrows():
-            with cols[idx % 4]:
-                change_class = "positive" if row["Change (%)"] >= 0 else "negative"
-                change_arrow = "↑" if row["Change (%)"] >= 0 else "↓"
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div class="metric-title">{row['Commodity']}</div>
-                    <div class="metric-value">${row['Price']:,.2f}</div>
-                    <div class="metric-change {change_class}">
-                        {change_arrow} {abs(row['Change (%)']):.2f}% 
-                        <span style="font-size: 12px;">({row['Last Update']})</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
     else:
         st.info("No commodity data available.")
-else:
-    st.info("No commodity data available.")
 
-# ----- Real-Time Geopolitical Risk Index -----
-st.header("⚠️ Real-Time Geopolitical Risk Index", divider="rainbow")
-if data_manager.cache["gpr_index"] is not None:
-    gpr_data = data_manager.cache["gpr_index"]
-    if gpr_data:
-        risk_level = gpr_data["current_value"]
-        if risk_level < 40:
-            risk_color = "green"
-            risk_text = "Low"
-        elif 40 <= risk_level < 60:
-            risk_color = "orange"
-            risk_text = "Moderate"
-        else:
-            risk_color = "red"
-            risk_text = "High"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Current Geopolitical Risk Level</div>
-            <div class="metric-value" style="color: {risk_color}">{risk_level:.1f} ({risk_text})</div>
-            <div class="metric-change">
-                Last updated: {gpr_data["last_update"]}
+if selected_section == "📊 Full Dashboard" or selected_section == "⚠️ Geopolitical Risk":
+    # ----- Real-Time Geopolitical Risk Index -----
+    st.header("⚠️ Real-Time Geopolitical Risk Index", divider="rainbow")
+    if data_manager.cache["gpr_index"] is not None:
+        gpr_data = data_manager.cache["gpr_index"]
+        if gpr_data:
+            risk_level = gpr_data["current_value"]
+            if risk_level < 40:
+                risk_color = "green"
+                risk_text = "Low"
+            elif 40 <= risk_level < 60:
+                risk_color = "orange"
+                risk_text = "Moderate"
+            else:
+                risk_color = "red"
+                risk_text = "High"
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-title">Current Geopolitical Risk Level</div>
+                <div class="metric-value" style="color: {risk_color}">{risk_level:.1f} ({risk_text})</div>
+                <div class="metric-change">
+                    Last updated: {gpr_data["last_update"]}
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
-        fig = px.line(
-            gpr_data["data"], 
-            x="Date", 
-            y="Risk_Index", 
-            title="Geopolitical Risk Index (Last 30 Days)",
-            labels={"Risk_Index": "Risk Index"}
-        )
-        fig.add_hline(y=40, line_dash="dot", line_color="green", annotation_text="Low Risk Threshold")
-        fig.add_hline(y=60, line_dash="dot", line_color="red", annotation_text="High Risk Threshold")
-        st.plotly_chart(fig, use_container_width=True)
+            """, unsafe_allow_html=True)
+            fig = px.line(
+                gpr_data["data"], 
+                x="Date", 
+                y="Risk_Index", 
+                title="Geopolitical Risk Index (Last 30 Days)",
+                labels={"Risk_Index": "Risk Index"}
+            )
+            fig.add_hline(y=40, line_dash="dot", line_color="green", annotation_text="Low Risk Threshold")
+            fig.add_hline(y=60, line_dash="dot", line_color="red", annotation_text="High Risk Threshold")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No GPR data available.")
     else:
         st.info("No GPR data available.")
-else:
-    st.info("No GPR data available.")
 
 # ----- News Feed -----
-st.header("📰 Latest Economic News", divider="rainbow")
-def fetch_economic_news():
-    news_items = [
-        {
-            "title": "Fed Signals Potential Rate Cuts Later This Year",
-            "source": "Financial Times",
-            "time": "15 minutes ago",
-            "impact": "High"
-        },
-        {
-            "title": "Inflation Shows Signs of Cooling in Latest Report",
-            "source": "Wall Street Journal",
-            "time": "1 hour ago",
-            "impact": "Medium"
-        },
-        {
-            "title": "Trade Deficit Widens Amid Global Supply Chain Shifts",
-            "source": "Bloomberg",
-            "time": "2 hours ago",
-            "impact": "Medium"
-        },
-        {
-            "title": "ECB Maintains Rates Amid Economic Uncertainty",
-            "source": "Reuters",
-            "time": "3 hours ago",
-            "impact": "High"
-        }
-    ]
-    return news_items
+if selected_section == "📊 Full Dashboard":
+    st.header("📰 Latest Economic News", divider="rainbow")
+    def fetch_economic_news():
+        news_items = [
+            {
+                "title": "Fed Signals Potential Rate Cuts Later This Year",
+                "source": "Financial Times",
+                "time": "15 minutes ago",
+                "impact": "High"
+            },
+            {
+                "title": "Inflation Shows Signs of Cooling in Latest Report",
+                "source": "Wall Street Journal",
+                "time": "1 hour ago",
+                "impact": "Medium"
+            },
+            {
+                "title": "Trade Deficit Widens Amid Global Supply Chain Shifts",
+                "source": "Bloomberg",
+                "time": "2 hours ago",
+                "impact": "Medium"
+            },
+            {
+                "title": "ECB Maintains Rates Amid Economic Uncertainty",
+                "source": "Reuters",
+                "time": "3 hours ago",
+                "impact": "High"
+            }
+        ]
+        return news_items
 
-news_items = fetch_economic_news()
-if news_items:
-    for news in news_items:
-        with st.expander(f"{news['title']} ({news['source']} - {news['time']})"):
-            st.write("This is a simulated news item. In a production app, you would integrate with a real news API.")
-            st.markdown(f"**Impact:** {news['impact']}")
-else:
-    st.info("No news available.")
+    news_items = fetch_economic_news()
+    if news_items:
+        for news in news_items:
+            with st.expander(f"{news['title']} ({news['source']} - {news['time']})"):
+                st.write("This is a simulated news item. In a production app, you would integrate with a real news API.")
+                st.markdown(f"**Impact:** {news['impact']}")
+    else:
+        st.info("No news available.")
 
 st.divider()
 st.markdown("""
