@@ -10,3 +10,4 @@ pytz
 requests
 python-dateutil
 streamlit-aggrid
+streamlit-autorefresh
