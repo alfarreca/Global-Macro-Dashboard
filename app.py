@@ -10,6 +10,7 @@ import time
 from threading import Thread
 import queue
 import requests
+import sys
 from bs4 import BeautifulSoup
 
 # Config
@@ -73,7 +74,8 @@ class RealTimeDataManager:
             "commodities": None,
             "gpr_index": None
         }
-    
+        self.errors = []  # For UI-safe error reporting in the main thread
+
     def fetch_market_data(self):
         indices = {
             "S&P 500": "^GSPC",
@@ -100,28 +102,28 @@ class RealTimeDataManager:
                         "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
                     })
                 else:
-                    st.warning(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
+                    self.errors.append(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
             except Exception as e:
-                st.warning(f"Error fetching {name} data: {str(e)}")
+                self.errors.append(f"Error fetching {name} data: {str(e)}")
         return market_data
-    
+
     def fetch_economic_data(self):
         try:
             gdp_series = fred.get_series("GDPC1")
             us_gdp = gdp_series.tail(1).values[0]
             prev_gdp = gdp_series.tail(2).values[0]
             gdp_change = ((us_gdp - prev_gdp) / prev_gdp) * 100
-            
+
             inflation_series = fred.get_series("CPIAUCSL").pct_change(12) * 100
             us_inflation = inflation_series.tail(1).values[0]
             prev_inflation = inflation_series.tail(2).values[0]
             inflation_change = us_inflation - prev_inflation
-            
+
             unemp_series = fred.get_series("UNRATE")
             us_unemp = unemp_series.tail(1).values[0]
             prev_unemp = unemp_series.tail(2).values[0]
             unemp_change = us_unemp - prev_unemp
-            
+
             return {
                 "us_gdp": us_gdp,
                 "gdp_change": gdp_change,
@@ -132,20 +134,20 @@ class RealTimeDataManager:
                 "last_update": datetime.datetime.now().strftime('%H:%M:%S')
             }
         except Exception as e:
-            st.warning(f"Error fetching economic data: {str(e)}")
+            self.errors.append(f"Error fetching economic data: {str(e)}")
             return None
-    
+
     def fetch_central_bank_rates(self):
         try:
             fed_rate_series = fred.get_series("FEDFUNDS")
             fed_rate = fed_rate_series.tail(1).values[0]
             prev_fed_rate = fed_rate_series.tail(2).values[0]
             fed_change = fed_rate - prev_fed_rate
-            
+
             ecb_rate, ecb_change = self._scrape_ecb_rate()
             boj_rate = -0.10
             boj_change = 0.00
-            
+
             return {
                 "fed_rate": fed_rate,
                 "fed_change": fed_change,
@@ -156,13 +158,13 @@ class RealTimeDataManager:
                 "last_update": datetime.datetime.now().strftime('%H:%M:%S')
             }
         except Exception as e:
-            st.warning(f"Error fetching central bank rates: {str(e)}")
+            self.errors.append(f"Error fetching central bank rates: {str(e)}")
             return None
-    
+
     def _scrape_ecb_rate(self):
         # Mock - real implementation would scrape or API call
         return 4.25, 0.0
-    
+
     def fetch_commodities(self):
         commodities = {
             "Gold": "GC=F",
@@ -188,25 +190,29 @@ class RealTimeDataManager:
                         "Last Update": datetime.datetime.now().strftime('%H:%M:%S')
                     })
                 else:
-                    st.warning(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
+                    self.errors.append(f"{name}: No data found (may be delisted or unsupported by Yahoo Finance).")
             except Exception as e:
-                st.warning(f"Error fetching {name} data: {str(e)}")
+                self.errors.append(f"Error fetching {name} data: {str(e)}")
         return comm_data
-    
+
     def fetch_gpr_index(self):
-        dates = pd.date_range(end=datetime.datetime.now(), periods=30)
-        base_risk = 50 + np.random.normal(0, 2, 30)
-        for i in [5, 15, 25]:
-            base_risk[i] += 15 * np.random.random()
-            for j in range(i+1, min(i+6, 30)):
-                base_risk[j] += (15 - (j-i)*3) * np.random.random()
-        gpr_data = pd.DataFrame({"Date": dates, "Risk_Index": base_risk})
-        return {
-            "data": gpr_data,
-            "current_value": base_risk[-1],
-            "last_update": datetime.datetime.now().strftime('%H:%M:%S')
-        }
-    
+        try:
+            dates = pd.date_range(end=datetime.datetime.now(), periods=30)
+            base_risk = 50 + np.random.normal(0, 2, 30)
+            for i in [5, 15, 25]:
+                base_risk[i] += 15 * np.random.random()
+                for j in range(i+1, min(i+6, 30)):
+                    base_risk[j] += (15 - (j-i)*3) * np.random.random()
+            gpr_data = pd.DataFrame({"Date": dates, "Risk_Index": base_risk})
+            return {
+                "data": gpr_data,
+                "current_value": base_risk[-1],
+                "last_update": datetime.datetime.now().strftime('%H:%M:%S')
+            }
+        except Exception as e:
+            self.errors.append(f"Error fetching GPR index: {str(e)}")
+            return None
+
     def data_fetcher_thread(self):
         while not self.stop_thread:
             try:
@@ -218,15 +224,15 @@ class RealTimeDataManager:
                 self.last_update = datetime.datetime.now()
                 time.sleep(60)
             except Exception as e:
-                st.warning(f"Error in data fetcher thread: {str(e)}")
+                self.errors.append(f"Error in data fetcher thread: {str(e)}")
                 time.sleep(10)
-    
+
     def start(self):
         self.stop_thread = False
         thread = Thread(target=self.data_fetcher_thread)
         thread.daemon = True
         thread.start()
-    
+
     def stop(self):
         self.stop_thread = True
 
@@ -234,10 +240,15 @@ class RealTimeDataManager:
 data_manager = RealTimeDataManager()
 data_manager.start()
 
+# ========== UI-safe error reporting ==========
+if data_manager.errors:
+    for err in data_manager.errors:
+        st.warning(err)
+    data_manager.errors.clear()
+
 # ========== 1. Header (Time + Refresh) ==========
 col1, col2, col3 = st.columns([2,1,1])
 with col1:
-    # Show actual last update time
     last_update_str = data_manager.last_update.strftime('%Y-%m-%d %H:%M:%S')
     st.markdown(f"**Last Updated:** <span class='blink'>{last_update_str}</span>", unsafe_allow_html=True)
 
@@ -245,9 +256,9 @@ with col2:
     if st.button("🔄 Manual Refresh"):
         data_manager.last_update = datetime.datetime.now()
         try:
-            st.rerun()  # Streamlit >=1.27
+            st.rerun()
         except AttributeError:
-            pass  # For older Streamlit, browser refresh required
+            pass
 
 with col3:
     time_range = st.selectbox("Time Range", ["1D", "1W", "1M", "3M", "1Y"], index=0)
@@ -286,11 +297,9 @@ if data_manager.cache["market_data"]:
                 use_container_width=True
             )
         selected_index = st.selectbox("Select Index for Detailed View", df_market["Index"].tolist(), index=0)
-        # Only offer what you have
         ticker_map = {
             "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "Dow Jones": "^DJI",
             "FTSE 100": "^FTSE", "DAX": "^GDAXI", "Nikkei 225": "^N225"
-            # "Shanghai Composite": "^SSEC"
         }
         selected_ticker = ticker_map[selected_index]
         try:
