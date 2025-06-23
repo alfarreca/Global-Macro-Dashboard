@@ -3,9 +3,14 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
+import time
+import random
 
 # App title
 st.title('Global Market Index Comparison')
+
+# Configure yfinance to be more resilient
+yf.pdr_override()
 
 # Sidebar controls
 with st.sidebar:
@@ -24,6 +29,19 @@ with st.sidebar:
     # Additional metrics
     show_metrics = st.checkbox('Show performance metrics', value=True)
 
+# Function to fetch data with retries and delays
+def fetch_with_retry(ticker, start_date, end_date, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            data = yf.Ticker(ticker).history(start=start_date, end=end_date)['Close']
+            return data
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = random.uniform(1, 3)  # Random delay between 1-3 seconds
+                time.sleep(wait_time)
+                continue
+            raise e
+
 # Function to load data for a specific time period
 @st.cache_data(ttl=3600)
 def load_data(time_period):
@@ -40,27 +58,33 @@ def load_data(time_period):
     
     try:
         data = {}
+        
+        # Add random delay between index fetches
+        time.sleep(random.uniform(0.5, 1.5))
+        
         if show_sp500:
-            data['S&P 500'] = yf.Ticker("^GSPC").history(start=start_date, end=end_date)['Close']
+            data['S&P 500'] = fetch_with_retry("^GSPC", start_date, end_date)
         if show_nasdaq:
-            data['NASDAQ'] = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
+            data['NASDAQ'] = fetch_with_retry("^IXIC", start_date, end_date)
         if show_russell:
-            data['Russell 2000'] = yf.Ticker("^RUT").history(start=start_date, end=end_date)['Close']
+            data['Russell 2000'] = fetch_with_retry("^RUT", start_date, end_date)
         if show_dax:
-            data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
+            data['DAX'] = fetch_with_retry("^GDAXI", start_date, end_date)
         
         df = pd.DataFrame(data).dropna()
         return df
     
     except Exception as e:
         st.error(f"Error in data loading: {str(e)}")
+        st.warning("If you're seeing rate limit errors, please wait a few minutes and refresh the page.")
         return pd.DataFrame()
 
 # Create tabs for different time periods
 tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
 
 def display_tab_content(time_period, tab):
-    df = load_data(time_period)
+    with st.spinner(f'Loading {time_period} data...'):
+        df = load_data(time_period)
     
     if not df.empty:
         if normalize:
@@ -69,25 +93,27 @@ def display_tab_content(time_period, tab):
         # Create color mapping only for visible indices
         color_map = {}
         if show_sp500:
-            color_map['S&P 500'] = 'blue'
+            color_map['S&P 500'] = '#1f77b4'  # blue
         if show_nasdaq:
-            color_map['NASDAQ'] = 'green'
+            color_map['NASDAQ'] = '#2ca02c'  # green
         if show_russell:
-            color_map['Russell 2000'] = 'red'
+            color_map['Russell 2000'] = '#d62728'  # red
         if show_dax:
-            color_map['DAX'] = 'purple'
+            color_map['DAX'] = '#9467bd'  # purple
         
         # Create the plot
         fig = px.line(df, 
                     x=df.index, 
                     y=df.columns,
                     title=f'Market Index Performance ({time_period})',
-                    labels={'value': 'Index Value', 'variable': 'Index'},
+                    labels={'value': 'Normalized Value' if normalize else 'Index Value', 
+                           'variable': 'Index'},
                     color_discrete_map=color_map)
         
         fig.update_layout(
             hovermode='x unified',
-            legend_title_text='Index'
+            legend_title_text='Index',
+            yaxis_title='Normalized Value (Base 100)' if normalize else 'Index Value'
         )
         tab.plotly_chart(fig, use_container_width=True)
         
@@ -124,6 +150,8 @@ def display_tab_content(time_period, tab):
                 correlation_matrix = daily_returns.corr()
                 tab.dataframe(correlation_matrix.style.format("{:.2f}"), 
                             use_container_width=True)
+    else:
+        tab.warning("No data available for the selected indices. Please check your selections and try again later.")
 
 # Display content for each tab
 with tab1:
@@ -147,5 +175,5 @@ st.markdown("""
 - **DAX (^GDAXI)**: German blue-chip stocks
 - Toggle switches control which indices appear
 - Normalization adjusts all indices to start at 100
-- Data source: Yahoo Finance
+- Data source: Yahoo Finance (may have rate limits)
 """)
