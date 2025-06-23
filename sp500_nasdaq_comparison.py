@@ -17,7 +17,7 @@ with st.sidebar:
     show_metrics = st.checkbox('Show performance metrics', value=True)
 
 @st.cache_data(ttl=3600)
-def load_data(time_period):
+def load_data(time_period, show_sp500, show_nasdaq, show_russell, show_dax):
     end_date = datetime.today()
     if time_period == '3 Months':
         start_date = end_date - timedelta(days=90)
@@ -41,10 +41,10 @@ def load_data(time_period):
             data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
         df = pd.DataFrame(data)
         df = df.dropna(how='all')  # Only drop rows where all indices are missing
-        return df
+        return df, data
     except Exception as e:
         st.error(f"Error in data loading: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
 def robust_normalize(df):
     """Normalize each column by its own first valid value."""
@@ -57,21 +57,29 @@ def robust_normalize(df):
 
 tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
 
-def display_tab_content(time_period, tab):
-    df = load_data(time_period)
+def display_tab_content(time_period, tab, show_sp500, show_nasdaq, show_russell, show_dax):
+    df, data_raw = load_data(time_period, show_sp500, show_nasdaq, show_russell, show_dax)
+
+    # Sidebar debugging for DAX
+    with st.sidebar:
+        if show_dax:
+            st.write("DAX data preview (first 5):", data_raw.get('DAX', 'Not requested'))
+            if 'DAX' not in df.columns or df['DAX'].notna().sum() == 0:
+                st.warning("No DAX data available for the selected time period. (Yahoo Finance may be missing DAX data.)")
+
     if not df.empty:
         if normalize:
             df = robust_normalize(df)
         color_map = {}
-        if show_sp500:
-            color_map['S&P 500'] = 'blue'
-        if show_nasdaq:
-            color_map['NASDAQ'] = 'green'
-        if show_russell:
-            color_map['Russell 2000'] = 'red'
-        if show_dax:
-            color_map['DAX'] = 'orange'
+        if show_sp500: color_map['S&P 500'] = 'blue'
+        if show_nasdaq: color_map['NASDAQ'] = 'green'
+        if show_russell: color_map['Russell 2000'] = 'red'
+        if show_dax: color_map['DAX'] = 'orange'
         available_indices = [col for col in color_map if col in df.columns and df[col].notna().sum() > 0]
+        # Tab-level warning (for users)
+        if show_dax and ('DAX' not in df.columns or df['DAX'].notna().sum() == 0):
+            tab.warning("DAX was requested, but no DAX data is available for this time window.")
+
         if available_indices:
             fig = px.line(
                 df,
@@ -115,13 +123,13 @@ def display_tab_content(time_period, tab):
         tab.info("No data available for the selected indices and time period.")
 
 with tab1:
-    display_tab_content("2 Years", tab1)
+    display_tab_content("2 Years", tab1, show_sp500, show_nasdaq, show_russell, show_dax)
 with tab2:
-    display_tab_content("1 Year", tab2)
+    display_tab_content("1 Year", tab2, show_sp500, show_nasdaq, show_russell, show_dax)
 with tab3:
-    display_tab_content("6 Months", tab3)
+    display_tab_content("6 Months", tab3, show_sp500, show_nasdaq, show_russell, show_dax)
 with tab4:
-    display_tab_content("3 Months", tab4)
+    display_tab_content("3 Months", tab4, show_sp500, show_nasdaq, show_russell, show_dax)
 
 st.markdown("""
 ### About This App
