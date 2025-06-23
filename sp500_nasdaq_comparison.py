@@ -119,10 +119,10 @@ if not df.empty:
         
         st.dataframe(metrics_df.style.format("{:.2f}"), use_container_width=True)
         
-        # Correlation matrix
+        # Correlation matrix (simplified without background gradient)
         st.subheader('Correlation Matrix')
         correlation_matrix = daily_returns.corr()
-        st.dataframe(correlation_matrix.style.format("{:.2f}").background_gradient(cmap='coolwarm', axis=None), 
+        st.dataframe(correlation_matrix.style.format("{:.2f}"), 
                     use_container_width=True)
 
 # Add some info
