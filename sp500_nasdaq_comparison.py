@@ -9,9 +9,6 @@ import random
 # App title
 st.title('Global Market Index Comparison')
 
-# Configure yfinance to be more resilient
-yf.pdr_override()
-
 # Sidebar controls
 with st.sidebar:
     st.header('Settings')
