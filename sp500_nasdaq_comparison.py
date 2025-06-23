@@ -40,7 +40,12 @@ def load_data(time_period, show_sp500, show_nasdaq, show_russell, show_dax):
         if show_dax:
             data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
         df = pd.DataFrame(data)
-        df = df.dropna(how='all')  # Only drop rows where all indices are missing
+        # Reindex to business days (so lines are continuous)
+        if not df.empty:
+            full_range = pd.date_range(df.index.min(), df.index.max(), freq='B')
+            df = df.reindex(full_range)
+            df = df.ffill()
+            df = df.dropna(how='all')
         return df, data
     except Exception as e:
         st.error(f"Error in data loading: {str(e)}")
@@ -63,7 +68,10 @@ def display_tab_content(time_period, tab, show_sp500, show_nasdaq, show_russell,
     # Sidebar debugging for DAX
     with st.sidebar:
         if show_dax:
-            st.write("DAX data preview (first 5):", data_raw.get('DAX', 'Not requested'))
+            if isinstance(data_raw.get('DAX', None), pd.Series):
+                st.dataframe(data_raw.get('DAX', None).head(), use_container_width=True)
+            else:
+                st.write("DAX data preview (first 5):", data_raw.get('DAX', 'Not requested'))
             if 'DAX' not in df.columns or df['DAX'].notna().sum() == 0:
                 st.warning("No DAX data available for the selected time period. (Yahoo Finance may be missing DAX data.)")
 
