@@ -18,7 +18,6 @@ with st.sidebar:
     normalize = st.checkbox('Normalize to 100 at start date', value=True)
     show_metrics = st.checkbox('Show performance metrics', value=True)
 
-# Function to load data for a specific time period
 @st.cache_data(ttl=3600)
 def load_data(time_period):
     end_date = datetime.today()
@@ -29,7 +28,7 @@ def load_data(time_period):
     elif time_period == '1 Year':
         start_date = end_date - timedelta(days=365)
     elif time_period == '2 Years':
-        start_date = end_date - timedelta(days=365 * 2)
+        start_date = end_date - timedelta(days=365*2)
     else:
         start_date = end_date - timedelta(days=365)
     try:
@@ -43,27 +42,29 @@ def load_data(time_period):
         if show_dax:
             data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
         df = pd.DataFrame(data)
-        # Drop only rows where all are NaN, keep rows if at least one index has data
-        df = df.dropna(how='all')
+        df = df.dropna(how='all')  # Only drop rows where all are NaN
         return df
     except Exception as e:
         st.error(f"Error in data loading: {str(e)}")
         return pd.DataFrame()
 
-# Create tabs for different time periods
 tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
+
+def robust_normalize(df):
+    """Normalize each column by its own first valid value."""
+    df_norm = df.copy()
+    for col in df_norm.columns:
+        first_valid = df_norm[col].first_valid_index()
+        if first_valid is not None and df_norm[col][first_valid] != 0:
+            df_norm[col] = (df_norm[col] / df_norm[col][first_valid]) * 100
+    return df_norm
 
 def display_tab_content(time_period, tab):
     df = load_data(time_period)
-    # Debug: Show dataframe to help see if DAX is present
-    # tab.write("Debug Data Preview:")
-    # tab.write(df.tail())
-
     if not df.empty:
         if normalize:
-            df = (df / df.iloc[0]) * 100
-
-        # Color mapping for visible indices
+            df = robust_normalize(df)
+        # Build color map
         color_map = {}
         if show_sp500:
             color_map['S&P 500'] = 'blue'
@@ -73,38 +74,35 @@ def display_tab_content(time_period, tab):
             color_map['Russell 2000'] = 'red'
         if show_dax:
             color_map['DAX'] = 'orange'
-
-        # Only plot columns that exist in the dataframe (handles missing data gracefully)
-        available_indices = [index for index in color_map if index in df.columns]
-
-        fig = px.line(
-            df,
-            x=df.index,
-            y=available_indices,
-            title=f'U.S. & European Market Index Performance ({time_period})',
-            labels={'value': 'Index Value', 'variable': 'Index'},
-            color_discrete_map=color_map
-        )
-        fig.update_layout(
-            hovermode='x unified',
-            legend_title_text='Index'
-        )
-        tab.plotly_chart(fig, use_container_width=True)
+        # Only plot columns that actually exist (could be toggled off or have no data)
+        available_indices = [col for col in color_map if col in df.columns and df[col].notna().sum() > 0]
+        if available_indices:
+            fig = px.line(
+                df,
+                x=df.index,
+                y=available_indices,
+                title=f'U.S. & European Market Index Performance ({time_period})',
+                labels={'value': 'Index Value', 'variable': 'Index'},
+                color_discrete_map=color_map
+            )
+            fig.update_layout(
+                hovermode='x unified',
+                legend_title_text='Index'
+            )
+            tab.plotly_chart(fig, use_container_width=True)
+        else:
+            tab.info("No valid index data available for plotting.")
 
         # Show performance metrics if requested
-        if show_metrics and len(df) > 1:
+        if show_metrics and len(df) > 1 and available_indices:
             tab.subheader('Performance Metrics')
-
-            # Calculate metrics only for indices present in df
-            start_values = df.iloc[0]
-            end_values = df.iloc[-1]
+            start_values = df[available_indices].iloc[0]
+            end_values = df[available_indices].iloc[-1]
             returns = ((end_values - start_values) / start_values) * 100
-
             days = (df.index[-1] - df.index[0]).days
             years = days / 365.25
             annualized_returns = ((end_values / start_values) ** (1 / years) - 1) * 100
-
-            daily_returns = df.pct_change().dropna()
+            daily_returns = df[available_indices].pct_change().dropna()
             volatility = daily_returns.std() * (252 ** 0.5) * 100  # Annualized
 
             metrics_df = pd.DataFrame({
@@ -112,10 +110,9 @@ def display_tab_content(time_period, tab):
                 'Annualized Return (%)': annualized_returns.round(2),
                 'Annualized Volatility (%)': volatility.round(2)
             })
-
             tab.dataframe(metrics_df.style.format("{:.2f}"), use_container_width=True)
 
-            if len(df.columns) > 1:
+            if len(available_indices) > 1:
                 tab.subheader('Correlation Matrix')
                 correlation_matrix = daily_returns.corr()
                 tab.dataframe(correlation_matrix.style.format("{:.2f}"), use_container_width=True)
@@ -131,7 +128,6 @@ with tab3:
 with tab4:
     display_tab_content("3 Months", tab4)
 
-# About section
 st.markdown("""
 ### About This App
 - **S&P 500 (^GSPC)**: 500 large-cap U.S. companies across all sectors
