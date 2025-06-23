@@ -5,7 +5,6 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import time
 import random
-from pandas_datareader import data as pdr
 
 # App title
 st.title('Global Market Index Comparison')
@@ -27,62 +26,65 @@ with st.sidebar:
     # Additional metrics
     show_metrics = st.checkbox('Show performance metrics', value=True)
 
-# Function to fetch data with multiple fallback methods
-def fetch_index_data(ticker, start_date, end_date):
-    methods = [
-        lambda: yf.Ticker(ticker).history(start=start_date, end=end_date)['Close'],
-        lambda: pdr.get_data_yahoo(ticker, start=start_date, end=end_date)['Close']
-    ]
-    
-    for method in methods:
+# Enhanced data fetching with retries
+def fetch_index_data(ticker, start_date, end_date, max_retries=3):
+    for attempt in range(max_retries):
         try:
-            data = method()
+            # Add random delay to prevent rate limiting
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            data = yf.Ticker(ticker).history(
+                start=start_date,
+                end=end_date,
+                interval="1d",  # Daily data
+                auto_adjust=True  # Use adjusted prices
+            )['Close']
+            
             if not data.empty:
                 return data
-        except:
+                
+        except Exception as e:
+            if attempt == max_retries - 1:
+                st.warning(f"Failed to fetch data for {ticker} after {max_retries} attempts")
             continue
     
-    return pd.Series()  # Return empty series if all methods fail
+    return pd.Series(dtype='float64')  # Return empty series if all retries fail
 
 # Function to load data for a specific time period
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600*3)  # Cache for 3 hours
 def load_data(time_period):
     end_date = datetime.today()
+    start_date = {
+        '3 Months': end_date - timedelta(days=90),
+        '6 Months': end_date - timedelta(days=180),
+        '1 Year': end_date - timedelta(days=365),
+        '2 Years': end_date - timedelta(days=365*2)
+    }.get(time_period, end_date - timedelta(days=365*2))
     
-    if time_period == '3 Months':
-        start_date = end_date - timedelta(days=90)
-    elif time_period == '6 Months':
-        start_date = end_date - timedelta(days=180)
-    elif time_period == '1 Year':
-        start_date = end_date - timedelta(days=365)
-    elif time_period == '2 Years':
-        start_date = end_date - timedelta(days=365*2)
+    data = {}
+    tickers = {
+        'S&P 500': "^GSPC",
+        'NASDAQ': "^IXIC",
+        'Russell 2000': "^RUT",
+        'DAX': "^GDAXI"
+    }
     
-    try:
-        data = {}
-        time.sleep(random.uniform(0.5, 1.5))  # Rate limiting protection
-        
-        if show_sp500:
-            data['S&P 500'] = fetch_index_data("^GSPC", start_date, end_date)
-        if show_nasdaq:
-            data['NASDAQ'] = fetch_index_data("^IXIC", start_date, end_date)
-        if show_russell:
-            data['Russell 2000'] = fetch_index_data("^RUT", start_date, end_date)
-        if show_dax:
-            data['DAX'] = fetch_index_data("^GDAXI", start_date, end_date)
-        
-        df = pd.DataFrame(data).dropna()
-        
-        # If we have no data, try expanding the date range slightly
-        if df.empty:
-            start_date = start_date - timedelta(days=7)  # Try 1 week earlier
-            return load_data(time_period)  # Recursively try again
-            
-        return df
+    for name, ticker in tickers.items():
+        if (name == 'S&P 500' and show_sp500) or \
+           (name == 'NASDAQ' and show_nasdaq) or \
+           (name == 'Russell 2000' and show_russell) or \
+           (name == 'DAX' and show_dax):
+            data[name] = fetch_index_data(ticker, start_date, end_date)
     
-    except Exception as e:
-        st.error(f"Error in data loading: {str(e)}")
-        return pd.DataFrame()
+    df = pd.DataFrame(data).dropna()
+    
+    # If empty, try with slightly expanded date range
+    if df.empty and time_period in ['3 Months', '6 Months']:
+        st.warning("No data found, trying with expanded date range...")
+        new_start = start_date - timedelta(days=14)
+        return load_data(time_period)  # Recursive retry
+    
+    return df
 
 # Create tabs for different time periods
 tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
@@ -102,8 +104,9 @@ def display_tab_content(time_period, tab):
             'DAX': '#9467bd'
         }
         
-        visible_columns = [col for col in df.columns if col in color_map]
-        df = df[visible_columns]
+        # Only show selected indices
+        visible_cols = [col for col in df.columns if col in color_map]
+        df = df[visible_cols]
         
         fig = px.line(df, 
                     x=df.index, 
@@ -147,12 +150,12 @@ def display_tab_content(time_period, tab):
                 tab.dataframe(correlation_matrix.style.format("{:.2f}"), 
                             use_container_width=True)
     else:
-        tab.error("Failed to load data. Possible solutions:")
+        tab.error("Data loading failed. Please try:")
         tab.markdown("""
-        - Try again later (Yahoo Finance may be temporarily unavailable)
-        - Select fewer indices
-        - Try a different time period
-        - Check your internet connection
+        1. Refreshing the page
+        2. Selecting fewer indices
+        3. Trying a different time period
+        4. Waiting a few minutes if Yahoo Finance is rate limiting
         """)
 
 # Display content for each tab
@@ -170,16 +173,15 @@ with tab4:
 
 # Add some info
 st.markdown("""
-### Troubleshooting Guide
-If you're not seeing data:
-1. First, wait 1 minute and refresh the page
-2. Try selecting fewer indices
-3. Try a different time period
-4. Check [Yahoo Finance status](https://finance.yahoo.com)
+### Data Notes
+- All prices are closing values
+- Normalization resets all indices to 100 at the start date
+- Data may have slight discrepancies with official sources
+- Russell 2000 data may have more gaps than other indices
 
-### Data Sources
-- **S&P 500 (^GSPC)**: 500 large-cap U.S. companies
-- **NASDAQ (^IXIC)**: Tech-heavy U.S. stocks
-- **Russell 2000 (^RUT)**: Small-cap U.S. companies
-- **DAX (^GDAXI)**: German blue-chip stocks
+### Recommended Setup
+For best results:
+- Select 2-3 indices at a time
+- Try 1 Year or 2 Years time periods first
+- Refresh if data doesn't load initially
 """)
