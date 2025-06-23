@@ -47,26 +47,37 @@ with st.sidebar:
 # Download data
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
 def load_data(start_date, end_date):
-    sp500 = yf.download('^GSPC', start=start_date, end=end_date)['Close']
-    nasdaq = yf.download('^IXIC', start=start_date, end=end_date)['Close']
-    df = pd.DataFrame({'S&P 500': sp500, 'NASDAQ': nasdaq})
-    df = df.dropna()
-    return df
-
-try:
-    df = load_data(start_date, end_date)
+    try:
+        sp500 = yf.Ticker("^GSPC").history(start=start_date, end=end_date)['Close']
+        nasdaq = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
+        
+        # Create DataFrame with proper index
+        df = pd.DataFrame({
+            'S&P 500': sp500,
+            'NASDAQ': nasdaq
+        }).dropna()
+        
+        return df
     
+    except Exception as e:
+        st.error(f"Error in data loading: {str(e)}")
+        return pd.DataFrame()  # Return empty DataFrame on error
+
+# Load and display data
+df = load_data(start_date, end_date)
+
+if not df.empty:
     if normalize:
         # Normalize to 100 at start date
         df = (df / df.iloc[0]) * 100
     
     # Create the plot
     fig = px.line(df, 
-                  x=df.index, 
-                  y=df.columns,
-                  title=f'S&P 500 vs NASDAQ Performance ({date_range})',
-                  labels={'value': 'Index Value', 'variable': 'Index'},
-                  color_discrete_map={'S&P 500': 'blue', 'NASDAQ': 'green'})
+                x=df.index, 
+                y=df.columns,
+                title=f'S&P 500 vs NASDAQ Performance ({date_range})',
+                labels={'value': 'Index Value', 'variable': 'Index'},
+                color_discrete_map={'S&P 500': 'blue', 'NASDAQ': 'green'})
     
     fig.update_layout(hovermode='x unified')
     st.plotly_chart(fig, use_container_width=True)
@@ -101,10 +112,6 @@ try:
         # Correlation
         correlation = daily_returns.corr().iloc[0,1]
         st.write(f"Daily Returns Correlation: {correlation:.2f}")
-    
-except Exception as e:
-    st.error(f"Error loading data: {e}")
-    st.info("If the error persists, try reloading the app or checking your internet connection.")
 
 # Add some info
 st.markdown("""
