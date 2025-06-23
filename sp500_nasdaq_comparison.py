@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # App title
-st.title('Global Market Index Comparison')
+st.title('U.S. Market Index Comparison')
 
 # Sidebar controls
 with st.sidebar:
@@ -16,7 +16,6 @@ with st.sidebar:
     show_sp500 = st.toggle('S&P 500', value=True)
     show_nasdaq = st.toggle('NASDAQ', value=True)
     show_russell = st.toggle('Russell 2000', value=True)
-    show_dax = st.toggle('DAX', value=True)
     
     # Normalization options
     normalize = st.checkbox('Normalize to 100 at start date', value=True)
@@ -46,8 +45,6 @@ def load_data(time_period):
             data['NASDAQ'] = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
         if show_russell:
             data['Russell 2000'] = yf.Ticker("^RUT").history(start=start_date, end=end_date)['Close']
-        if show_dax:
-            data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
         
         df = pd.DataFrame(data).dropna()
         return df
@@ -74,14 +71,12 @@ def display_tab_content(time_period, tab):
             color_map['NASDAQ'] = 'green'
         if show_russell:
             color_map['Russell 2000'] = 'red'
-        if show_dax:
-            color_map['DAX'] = 'purple'
         
         # Create the plot
         fig = px.line(df, 
                     x=df.index, 
                     y=df.columns,
-                    title=f'Market Index Performance ({time_period})',
+                    title=f'U.S. Market Index Performance ({time_period})',
                     labels={'value': 'Index Value', 'variable': 'Index'},
                     color_discrete_map=color_map)
         
@@ -141,11 +136,10 @@ with tab4:
 # Add some info
 st.markdown("""
 ### About This App
-- **S&P 500 (^GSPC)**: 500 large-cap U.S. companies
-- **NASDAQ (^IXIC)**: Tech-heavy U.S. stocks
+- **S&P 500 (^GSPC)**: 500 large-cap U.S. companies across all sectors
+- **NASDAQ (^IXIC)**: All stocks on NASDAQ exchange (tech-heavy)
 - **Russell 2000 (^RUT)**: Small-cap U.S. companies
-- **DAX (^GDAXI)**: German blue-chip stocks
-- Toggle switches control which indices appear
-- Normalization adjusts all indices to start at 100
+- Toggle switches control which indices appear in the charts
+- Normalization adjusts all indices to start at 100 for easier comparison
 - Data source: Yahoo Finance
 """)
