@@ -4,10 +4,8 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 
-# App title
 st.title('U.S. & European Market Index Comparison')
 
-# Sidebar controls
 with st.sidebar:
     st.header('Settings')
     st.subheader('Show Indices:')
@@ -42,13 +40,11 @@ def load_data(time_period):
         if show_dax:
             data['DAX'] = yf.Ticker("^GDAXI").history(start=start_date, end=end_date)['Close']
         df = pd.DataFrame(data)
-        df = df.dropna(how='all')  # Only drop rows where all are NaN
+        df = df.dropna(how='all')  # Only drop rows where all indices are missing
         return df
     except Exception as e:
         st.error(f"Error in data loading: {str(e)}")
         return pd.DataFrame()
-
-tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
 
 def robust_normalize(df):
     """Normalize each column by its own first valid value."""
@@ -59,12 +55,13 @@ def robust_normalize(df):
             df_norm[col] = (df_norm[col] / df_norm[col][first_valid]) * 100
     return df_norm
 
+tab1, tab2, tab3, tab4 = st.tabs(["2 Years", "1 Year", "6 Months", "3 Months"])
+
 def display_tab_content(time_period, tab):
     df = load_data(time_period)
     if not df.empty:
         if normalize:
             df = robust_normalize(df)
-        # Build color map
         color_map = {}
         if show_sp500:
             color_map['S&P 500'] = 'blue'
@@ -74,7 +71,6 @@ def display_tab_content(time_period, tab):
             color_map['Russell 2000'] = 'red'
         if show_dax:
             color_map['DAX'] = 'orange'
-        # Only plot columns that actually exist (could be toggled off or have no data)
         available_indices = [col for col in color_map if col in df.columns and df[col].notna().sum() > 0]
         if available_indices:
             fig = px.line(
@@ -93,7 +89,6 @@ def display_tab_content(time_period, tab):
         else:
             tab.info("No valid index data available for plotting.")
 
-        # Show performance metrics if requested
         if show_metrics and len(df) > 1 and available_indices:
             tab.subheader('Performance Metrics')
             start_values = df[available_indices].iloc[0]
