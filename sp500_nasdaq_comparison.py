@@ -11,6 +11,12 @@ st.title('U.S. Market Index Comparison')
 with st.sidebar:
     st.header('Settings')
     
+    # Index selection toggles
+    st.subheader('Show Indices:')
+    show_sp500 = st.toggle('S&P 500', value=True)
+    show_nasdaq = st.toggle('NASDAQ', value=True)
+    show_russell = st.toggle('Russell 2000', value=True)
+    
     # Normalization options
     normalize = st.checkbox('Normalize to 100 at start date', value=True)
     
@@ -32,16 +38,15 @@ def load_data(time_period):
         start_date = end_date - timedelta(days=365*2)
     
     try:
-        sp500 = yf.Ticker("^GSPC").history(start=start_date, end=end_date)['Close']
-        nasdaq = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
-        russell = yf.Ticker("^RUT").history(start=start_date, end=end_date)['Close']
+        data = {}
+        if show_sp500:
+            data['S&P 500'] = yf.Ticker("^GSPC").history(start=start_date, end=end_date)['Close']
+        if show_nasdaq:
+            data['NASDAQ'] = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
+        if show_russell:
+            data['Russell 2000'] = yf.Ticker("^RUT").history(start=start_date, end=end_date)['Close']
         
-        df = pd.DataFrame({
-            'S&P 500': sp500,
-            'NASDAQ': nasdaq,
-            'Russell 2000': russell
-        }).dropna()
-        
+        df = pd.DataFrame(data).dropna()
         return df
     
     except Exception as e:
@@ -58,17 +63,22 @@ def display_tab_content(time_period, tab):
         if normalize:
             df = (df / df.iloc[0]) * 100
         
+        # Create color mapping only for visible indices
+        color_map = {}
+        if show_sp500:
+            color_map['S&P 500'] = 'blue'
+        if show_nasdaq:
+            color_map['NASDAQ'] = 'green'
+        if show_russell:
+            color_map['Russell 2000'] = 'red'
+        
         # Create the plot
         fig = px.line(df, 
                     x=df.index, 
                     y=df.columns,
                     title=f'U.S. Market Index Performance ({time_period})',
                     labels={'value': 'Index Value', 'variable': 'Index'},
-                    color_discrete_map={
-                        'S&P 500': 'blue', 
-                        'NASDAQ': 'green',
-                        'Russell 2000': 'red'
-                    })
+                    color_discrete_map=color_map)
         
         fig.update_layout(
             hovermode='x unified',
@@ -103,11 +113,12 @@ def display_tab_content(time_period, tab):
             
             tab.dataframe(metrics_df.style.format("{:.2f}"), use_container_width=True)
             
-            # Correlation matrix
-            tab.subheader('Correlation Matrix')
-            correlation_matrix = daily_returns.corr()
-            tab.dataframe(correlation_matrix.style.format("{:.2f}"), 
-                        use_container_width=True)
+            # Correlation matrix (only if more than one index selected)
+            if len(df.columns) > 1:
+                tab.subheader('Correlation Matrix')
+                correlation_matrix = daily_returns.corr()
+                tab.dataframe(correlation_matrix.style.format("{:.2f}"), 
+                            use_container_width=True)
 
 # Display content for each tab
 with tab1:
@@ -128,6 +139,7 @@ st.markdown("""
 - **S&P 500 (^GSPC)**: 500 large-cap U.S. companies across all sectors
 - **NASDAQ (^IXIC)**: All stocks on NASDAQ exchange (tech-heavy)
 - **Russell 2000 (^RUT)**: Small-cap U.S. companies
+- Toggle switches control which indices appear in the charts
 - Normalization adjusts all indices to start at 100 for easier comparison
 - Data source: Yahoo Finance
 """)
