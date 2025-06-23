@@ -47,8 +47,8 @@ with st.sidebar:
 # Download data
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
 def load_data(start_date, end_date):
-    sp500 = yf.download('^GSPC', start=start_date, end=end_date)['Adj Close']
-    nasdaq = yf.download('^IXIC', start=start_date, end=end_date)['Adj Close']
+    sp500 = yf.download('^GSPC', start=start_date, end=end_date)['Close']
+    nasdaq = yf.download('^IXIC', start=start_date, end=end_date)['Close']
     df = pd.DataFrame({'S&P 500': sp500, 'NASDAQ': nasdaq})
     df = df.dropna()
     return df
@@ -104,6 +104,7 @@ try:
     
 except Exception as e:
     st.error(f"Error loading data: {e}")
+    st.info("If the error persists, try reloading the app or checking your internet connection.")
 
 # Add some info
 st.markdown("""
@@ -111,4 +112,5 @@ st.markdown("""
 - **S&P 500 (^GSPC)**: Represents 500 large-cap U.S. companies across all sectors
 - **NASDAQ (^IXIC)**: Tracks performance of all stocks listed on the NASDAQ, with heavy tech weighting
 - Normalization adjusts both indices to start at 100 for easier comparison of relative performance
+- Data source: Yahoo Finance
 """)
