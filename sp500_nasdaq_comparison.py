@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 
 # App title
-st.title('S&P 500 vs NASDAQ Normalized Comparison')
+st.title('U.S. Market Index Comparison')
 
 # Sidebar controls
 with st.sidebar:
@@ -48,13 +48,16 @@ with st.sidebar:
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
 def load_data(start_date, end_date):
     try:
+        # Get data for all three indices
         sp500 = yf.Ticker("^GSPC").history(start=start_date, end=end_date)['Close']
         nasdaq = yf.Ticker("^IXIC").history(start=start_date, end=end_date)['Close']
+        russell = yf.Ticker("^RUT").history(start=start_date, end=end_date)['Close']
         
         # Create DataFrame with proper index
         df = pd.DataFrame({
             'S&P 500': sp500,
-            'NASDAQ': nasdaq
+            'NASDAQ': nasdaq,
+            'Russell 2000': russell
         }).dropna()
         
         return df
@@ -75,11 +78,18 @@ if not df.empty:
     fig = px.line(df, 
                 x=df.index, 
                 y=df.columns,
-                title=f'S&P 500 vs NASDAQ Performance ({date_range})',
+                title=f'U.S. Market Index Performance ({date_range})',
                 labels={'value': 'Index Value', 'variable': 'Index'},
-                color_discrete_map={'S&P 500': 'blue', 'NASDAQ': 'green'})
+                color_discrete_map={
+                    'S&P 500': 'blue', 
+                    'NASDAQ': 'green',
+                    'Russell 2000': 'red'
+                })
     
-    fig.update_layout(hovermode='x unified')
+    fig.update_layout(
+        hovermode='x unified',
+        legend_title_text='Index'
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     # Show performance metrics if requested
@@ -109,15 +119,18 @@ if not df.empty:
         
         st.dataframe(metrics_df.style.format("{:.2f}"), use_container_width=True)
         
-        # Correlation
-        correlation = daily_returns.corr().iloc[0,1]
-        st.write(f"Daily Returns Correlation: {correlation:.2f}")
+        # Correlation matrix
+        st.subheader('Correlation Matrix')
+        correlation_matrix = daily_returns.corr()
+        st.dataframe(correlation_matrix.style.format("{:.2f}").background_gradient(cmap='coolwarm', axis=None), 
+                    use_container_width=True)
 
 # Add some info
 st.markdown("""
 ### About This App
-- **S&P 500 (^GSPC)**: Represents 500 large-cap U.S. companies across all sectors
-- **NASDAQ (^IXIC)**: Tracks performance of all stocks listed on the NASDAQ, with heavy tech weighting
-- Normalization adjusts both indices to start at 100 for easier comparison of relative performance
+- **S&P 500 (^GSPC)**: 500 large-cap U.S. companies across all sectors
+- **NASDAQ (^IXIC)**: All stocks on NASDAQ exchange (tech-heavy)
+- **Russell 2000 (^RUT)**: Small-cap U.S. companies
+- Normalization adjusts all indices to start at 100 for easier comparison
 - Data source: Yahoo Finance
 """)
