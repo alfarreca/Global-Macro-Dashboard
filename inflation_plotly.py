@@ -1,4 +1,6 @@
+# Final version of inflation_plotly.py with FRED API key validation and error handling
 
+final_plotly_script = """
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -12,11 +14,17 @@ st.title("📉 Inflation vs Interest Rates (US, Eurozone, Japan)")
 fred_api_key = st.text_input("a79018b53e3085363528cf148b358708", type="password")
 
 if fred_api_key:
-    fred = Fred(api_key=fred_api_key)
+    try:
+        fred = Fred(api_key=fred_api_key)
+        # Test key with a small known request
+        test_series = fred.get_series("CPIAUCSL")
+    except Exception as e:
+        st.error(f"❌ Failed to fetch data from FRED.\\n**Error:** {e}\\n\\n🔑 Check your API key and try again.")
+        st.stop()
 
-    # --- US ---
+    # Proceed if key is valid
     st.subheader("🇺🇸 United States")
-    us_cpi = fred.get_series("CPIAUCSL")
+    us_cpi = test_series
     us_rate = fred.get_series("GS10")
     df_us = pd.DataFrame({"US_CPI": us_cpi, "US_10Y": us_rate}).dropna()
     df_us = df_us.loc["2010-01-01":]
@@ -32,7 +40,6 @@ if fred_api_key:
     fig_us.update_layout(title="US: Inflation vs Interest Rate", xaxis_title="Date", yaxis_title="Percentage")
     st.plotly_chart(fig_us, use_container_width=True)
 
-    # --- Eurozone ---
     st.subheader("🇪🇺 Eurozone")
     eu_cpi = fred.get_series("CP0000EZ19M086NEST")
     eu_rate = yf.download("^TNX", start="2010-01-01", interval="1mo")["Adj Close"] / 10
@@ -51,7 +58,6 @@ if fred_api_key:
     fig_eu.update_layout(title="Eurozone: Inflation vs US Yield Proxy", xaxis_title="Date", yaxis_title="Percentage")
     st.plotly_chart(fig_eu, use_container_width=True)
 
-    # --- Japan ---
     st.subheader("🇯🇵 Japan")
     jp_cpi = fred.get_series("JPNCPIALLMINMEI")
     jp_rate = fred.get_series("IR3TIB01JPM156N")
@@ -68,3 +74,11 @@ if fred_api_key:
                                 name="2% Target", line=dict(color="gray", dash="dot")))
     fig_jp.update_layout(title="Japan: Inflation vs Interest Rate", xaxis_title="Date", yaxis_title="Percentage")
     st.plotly_chart(fig_jp, use_container_width=True)
+"""
+
+# Save final fixed script
+final_path = "/mnt/data/inflation_plotly_final.py"
+with open(final_path, "w") as f:
+    f.write(final_plotly_script)
+
+final_path
