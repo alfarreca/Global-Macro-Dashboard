@@ -1,6 +1,6 @@
-# Final version of inflation_plotly.py with FRED API key validation and error handling
+# Final clean version of the inflation_plotly.py script (no writing to files inside the app)
 
-final_plotly_script = """
+clean_plotly_script = """
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -76,9 +76,9 @@ if fred_api_key:
     st.plotly_chart(fig_jp, use_container_width=True)
 """
 
-# Save final fixed script
-final_path = "/mnt/data/inflation_plotly_final.py"
-with open(final_path, "w") as f:
-    f.write(final_plotly_script)
+# Save clean script for user
+clean_path = "/mnt/data/inflation_plotly_clean.py"
+with open(clean_path, "w") as f:
+    f.write(clean_plotly_script)
 
-final_path
+clean_path
