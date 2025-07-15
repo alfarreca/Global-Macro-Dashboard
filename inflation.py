@@ -1,6 +1,3 @@
-# Prepare a script that combines FRED and Yahoo Finance data for Streamlit app
-
-streamlit_script = """
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -70,11 +67,3 @@ if fred_api_key:
     ax3.legend()
     ax3.grid(True)
     st.pyplot(fig_jp)
-"""
-
-# Save it to a file for download
-path = "/mnt/data/inflation_vs_interest_global.py"
-with open(path, "w") as f:
-    f.write(streamlit_script)
-
-path
