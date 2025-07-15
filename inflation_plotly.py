@@ -1,6 +1,3 @@
-# Final clean version of the inflation_plotly.py script (no writing to files inside the app)
-
-clean_plotly_script = """
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,75 +7,68 @@ import yfinance as yf
 st.set_page_config(layout="wide")
 st.title("📉 Inflation vs Interest Rates (US, Eurozone, Japan)")
 
-# User inputs API key
+# ── FRED API key ────────────────────────────────────────────────────────────────
 fred_api_key = st.text_input("a79018b53e3085363528cf148b358708", type="password")
 
-if fred_api_key:
-    try:
-        fred = Fred(api_key=fred_api_key)
-        # Test key with a small known request
-        test_series = fred.get_series("CPIAUCSL")
-    except Exception as e:
-        st.error(f"❌ Failed to fetch data from FRED.\\n**Error:** {e}\\n\\n🔑 Check your API key and try again.")
-        st.stop()
+if not fred_api_key:
+    st.info("🔑 Please enter a FRED API key to load the charts.")
+    st.stop()
 
-    # Proceed if key is valid
-    st.subheader("🇺🇸 United States")
-    us_cpi = test_series
-    us_rate = fred.get_series("GS10")
-    df_us = pd.DataFrame({"US_CPI": us_cpi, "US_10Y": us_rate}).dropna()
-    df_us = df_us.loc["2010-01-01":]
-    df_us["Inflation_YoY"] = df_us["US_CPI"].pct_change(12) * 100
+# Validate key once to avoid hidden failures
+try:
+    fred = Fred(api_key=fred_api_key)
+    _ = fred.get_series("CPIAUCSL")  # quick test call
+except Exception as e:
+    st.error(f"❌ FRED request failed. Check your API key.\n\n**Error:** {e}")
+    st.stop()
 
-    fig_us = go.Figure()
-    fig_us.add_trace(go.Scatter(x=df_us.index, y=df_us["Inflation_YoY"],
-                                name="YoY Inflation (%)", line=dict(color="red")))
-    fig_us.add_trace(go.Scatter(x=df_us.index, y=df_us["US_10Y"],
-                                name="10Y Treasury Yield (%)", line=dict(color="blue")))
-    fig_us.add_trace(go.Scatter(x=df_us.index, y=[2]*len(df_us),
-                                name="2% Target", line=dict(color="gray", dash="dot")))
-    fig_us.update_layout(title="US: Inflation vs Interest Rate", xaxis_title="Date", yaxis_title="Percentage")
-    st.plotly_chart(fig_us, use_container_width=True)
+# ── Helper to build a dual‑axis chart ───────────────────────────────────────────
+def plot_dual(df, x, y1, y2, title, y1_title, y2_title, colors):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df[x], y=df[y1], name=y1_title, line=dict(color=colors[0])))
+    fig.add_trace(go.Scatter(x=df[x], y=df[y2], name=y2_title, line=dict(color=colors[1])))
+    fig.add_trace(go.Scatter(x=df[x], y=[2]*len(df), name="2 % Target",
+                             line=dict(color="gray", dash="dot")))
+    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Percent")
+    return fig
 
-    st.subheader("🇪🇺 Eurozone")
-    eu_cpi = fred.get_series("CP0000EZ19M086NEST")
-    eu_rate = yf.download("^TNX", start="2010-01-01", interval="1mo")["Adj Close"] / 10
-    df_eu = pd.DataFrame({"EZ_CPI": eu_cpi}).dropna()
-    df_eu["EZ_Inflation"] = df_eu["EZ_CPI"].pct_change(12) * 100
-    df_eu["US_Yield_Proxy"] = eu_rate
-    df_eu = df_eu.dropna()
+# ── U.S. ────────────────────────────────────────────────────────────────────────
+st.subheader("🇺🇸 United States")
+us_cpi  = fred.get_series("CPIAUCSL")
+us_rate = fred.get_series("GS10")           # 10‑year Treasury
+df_us = (pd.DataFrame({"CPI": us_cpi, "Rate": us_rate})
+         .dropna()
+         .loc["2010-01-01":])
+df_us["Inflation_YoY"] = df_us["CPI"].pct_change(12) * 100
+fig_us = plot_dual(df_us.reset_index(), "index", "Inflation_YoY", "Rate",
+                   "US: YoY Inflation vs 10‑Year Yield",
+                   "Inflation (%)", "10‑Year Yield (%)",
+                   ["red", "blue"])
+st.plotly_chart(fig_us, use_container_width=True)
 
-    fig_eu = go.Figure()
-    fig_eu.add_trace(go.Scatter(x=df_eu.index, y=df_eu["EZ_Inflation"],
-                                name="EZ Inflation YoY (%)", line=dict(color="orange")))
-    fig_eu.add_trace(go.Scatter(x=df_eu.index, y=df_eu["US_Yield_Proxy"],
-                                name="US 10Y Yield Proxy (%)", line=dict(color="blue")))
-    fig_eu.add_trace(go.Scatter(x=df_eu.index, y=[2]*len(df_eu),
-                                name="2% Target", line=dict(color="gray", dash="dot")))
-    fig_eu.update_layout(title="Eurozone: Inflation vs US Yield Proxy", xaxis_title="Date", yaxis_title="Percentage")
-    st.plotly_chart(fig_eu, use_container_width=True)
+# ── Eurozone ────────────────────────────────────────────────────────────────────
+st.subheader("🇪🇺 Eurozone")
+ez_cpi  = fred.get_series("CP0000EZ19M086NEST")  # HICP
+us10    = yf.download("^TNX", start="2010-01-01", interval="1mo")["Adj Close"]/10
+df_ez = (pd.DataFrame({"CPI": ez_cpi, "US10": us10})
+         .dropna())
+df_ez["Inflation_YoY"] = df_ez["CPI"].pct_change(12) * 100
+fig_ez = plot_dual(df_ez.reset_index(), "index", "Inflation_YoY", "US10",
+                   "Eurozone: YoY Inflation vs US 10‑Year Yield (proxy)",
+                   "Inflation (%)", "US 10‑Year Yield (%)",
+                   ["orange", "blue"])
+st.plotly_chart(fig_ez, use_container_width=True)
 
-    st.subheader("🇯🇵 Japan")
-    jp_cpi = fred.get_series("JPNCPIALLMINMEI")
-    jp_rate = fred.get_series("IR3TIB01JPM156N")
-    df_jp = pd.DataFrame({"JP_CPI": jp_cpi, "JP_3M": jp_rate}).dropna()
-    df_jp = df_jp.loc["2010-01-01":]
-    df_jp["JP_Inflation"] = df_jp["JP_CPI"].pct_change(12) * 100
-
-    fig_jp = go.Figure()
-    fig_jp.add_trace(go.Scatter(x=df_jp.index, y=df_jp["JP_Inflation"],
-                                name="JP Inflation YoY (%)", line=dict(color="green")))
-    fig_jp.add_trace(go.Scatter(x=df_jp.index, y=df_jp["JP_3M"],
-                                name="JP 3M Rate (%)", line=dict(color="blue")))
-    fig_jp.add_trace(go.Scatter(x=df_jp.index, y=[2]*len(df_jp),
-                                name="2% Target", line=dict(color="gray", dash="dot")))
-    fig_jp.update_layout(title="Japan: Inflation vs Interest Rate", xaxis_title="Date", yaxis_title="Percentage")
-    st.plotly_chart(fig_jp, use_container_width=True)
-"""
-
-# Save clean script for user
-clean_path = "/mnt/data/inflation_plotly_clean.py"
-with open(clean_path, "w") as f:
-    f.write(clean_plotly_script)
-
-clean_path
+# ── Japan ───────────────────────────────────────────────────────────────────────
+st.subheader("🇯🇵 Japan")
+jp_cpi  = fred.get_series("JPNCPIALLMINMEI")
+jp_rate = fred.get_series("IR3TIB01JPM156N")   # 3‑month interbank rate
+df_jp = (pd.DataFrame({"CPI": jp_cpi, "Rate": jp_rate})
+         .dropna()
+         .loc["2010-01-01":])
+df_jp["Inflation_YoY"] = df_jp["CPI"].pct_change(12) * 100
+fig_jp = plot_dual(df_jp.reset_index(), "index", "Inflation_YoY", "Rate",
+                   "Japan: YoY Inflation vs 3‑Month Rate",
+                   "Inflation (%)", "3‑Month Rate (%)",
+                   ["green", "blue"])
+st.plotly_chart(fig_jp, use_container_width=True)
