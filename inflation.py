@@ -11,7 +11,7 @@ st.set_page_config(layout="wide")
 st.title("📉 Inflation vs Interest Rates (US, Eurozone, Japan)")
 
 # User inputs API key
-fred_api_key = st.text_input("🔑 Enter your FRED API Key", type="password")
+fred_api_key = st.text_input("a79018b53e3085363528cf148b358708", type="password")
 
 if fred_api_key:
     fred = Fred(api_key=fred_api_key)
